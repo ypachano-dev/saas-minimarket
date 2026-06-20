@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir minimarket-core-saas *)"
+    ],
+    "additionalDirectories": [
+      "D:\\PROYECTOS_IA\\SaaS MiniMarket"
+    ]
+  }
+}

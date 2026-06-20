@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #8b5cf6; /* default violet-600 */
+  --color-primary-rgb: 139, 92, 246;
+  --color-secondary: #6366f1; /* default indigo-500 */
+  --color-secondary-rgb: 99, 102, 241;
+}
+
+@layer base {
+  body {
+    margin: 0;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    @apply bg-slate-50/50 text-slate-800 antialiased;
+  }
+}
+
+/* Premium UI/UX custom utilities */
+.glass-card {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(241, 245, 249, 0.8);
+}
+
+.glass-card-dark {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glow-blue {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+}
+
+.glow-purple {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.15);
+}
+
+.glow-emerald {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+}
+
+/* Dynamic Brand Utility Classes */
+.bg-brand-primary {
+  background-color: var(--color-primary);
+}
+.bg-brand-secondary {
+  background-color: var(--color-secondary);
+}
+.text-brand-primary {
+  color: var(--color-primary);
+}
+.text-brand-secondary {
+  color: var(--color-secondary);
+}
+.border-brand-primary {
+  border-color: var(--color-primary);
+}
+.border-brand-secondary {
+  border-color: var(--color-secondary);
+}
+.bg-brand-primary-10 {
+  background-color: rgba(var(--color-primary-rgb), 0.1);
+}
+.bg-brand-primary-20 {
+  background-color: rgba(var(--color-primary-rgb), 0.2);
+}
+.bg-brand-gradient {
+  background-image: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+}
+.bg-brand-menu-active {
+  background-image: linear-gradient(to right, rgba(var(--color-primary-rgb), 0.2) 0%, rgba(var(--color-secondary-rgb), 0.1) 100%);
+  border-left: 3px solid var(--color-primary);
+  color: #ffffff;
+}
+.glow-brand {
+  box-shadow: 0 0 20px rgba(var(--color-primary-rgb), 0.15);
+}
+

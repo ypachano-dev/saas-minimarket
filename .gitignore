@@ -1,0 +1,10 @@
+*.db
+*.sqlite3
+__pycache__/
+venv/
+.git/
+
+# Variables de entorno con credenciales (ANTHROPIC_API_KEY, etc.)
+.env
+.env.*
+!.env.example

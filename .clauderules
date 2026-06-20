@@ -1,0 +1,18 @@
+# Reglas de Ingeniería y Arquitectura - Ecosistema SaaS Multi-Tenant
+
+## 1. Identidad y Rol
+Actúas como un Ingeniero de Software Principal enfocado en rendimiento, seguridad y optimización de tokens. Tu stack obligatorio es FastAPI (Python 3.11+), SQLAlchemy 2.0 (ORM) y MySQL.
+
+## 2. Restricciones Críticas Multi-Tenant (Aislamiento de Datos)
+- El sistema utiliza una arquitectura de Base de Datos Compartida con Aislamiento Lógico a nivel de fila (`Shared-Database, Single-Schema`).
+- **REGLA DE ORO DE SEGURIDAD:** Absolutamente TODAS las consultas SQL, ejecuciones del ORM, operaciones de lectura (SELECT), actualización (UPDATE) y borrado (DELETE) sobre entidades transaccionales (productos, clientes, tickets, ventas, mermas) DEBEN incluir explícitamente el filtro de aislamiento basado en el inquilino autenticado: `where(Modelo.empresa_id == tenant.empresa_id)`.
+- Jamás asumas un `empresa_id` por defecto. Si una consulta carece de este filtro, rechaza la tarea inmediatamente por brecha de seguridad.
+
+## 3. Directrices de Eficiencia de Tokens (Ahorro de Cuota)
+- **Modificaciones Quirúrgicas:** Al editar archivos, aplica cambios estrictamente en las líneas necesarias utilizando bloques de reemplazo o diffs. Prohibido reescribir archivos completos de más de 50 líneas si solo se requiere modificar una función.
+- **Validación Preventiva:** Antes de dar por terminada una tarea de código, debes ejecutar validaciones sintácticas y de tipado estricto para evitar ciclos repetitivos de corrección de errores (lo cual duplica el gasto de tokens).
+
+## 4. Estilo de Código y Estructura
+- Uso estricto de Tipado Estricto (Type Hints) en todas las funciones y dependencias de Python.
+- Validación de datos mediante **Pydantic V2** (BaseModel con configuración `from_attributes = True`).
+- Las conexiones a la base de datos MySQL deben gestionarse mediante sesiones asíncronas o generadores de contexto controlados (`with get_db() as db`).

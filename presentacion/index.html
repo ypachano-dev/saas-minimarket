@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SaaS Omnichannel ERP & CRM — Presentación Comercial</title>
+  <!-- Google Fonts: Outfit for premium modern typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap" rel="stylesheet" />
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Outfit', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              primary: '#8b5cf6',
+              secondary: '#6366f1',
+              accent: '#00ebc7',
+              success: '#10b981',
+              danger: '#f43f5e',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.02);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.1);
+      border-radius: 99px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.2);
+    }
+
+    /* Glassmorphism Styles */
+    .glass-card {
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    .glow-brand {
+      box-shadow: 0 0 40px rgba(139, 92, 246, 0.15);
+    }
+    
+    /* Custom Keyframes for Simulations */
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.5; }
+      50% { transform: scale(1.05); opacity: 0.8; }
+      100% { transform: scale(0.95); opacity: 0.5; }
+    }
+    .pulse-glow {
+      animation: pulse-ring 4s infinite ease-in-out;
+    }
+
+    /* Slide transition animations */
+    .slide-enter {
+      opacity: 0;
+      transform: scale(0.96) translateX(30px);
+    }
+    .slide-active {
+      opacity: 1;
+      transform: scale(1) translateX(0);
+      transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+  </style>
+</head>
+<body class="bg-[#030712] text-slate-100 overflow-hidden min-h-screen flex flex-col font-sans select-none relative">
+
+  <!-- Background Glowing Blobs -->
+  <div class="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(99,102,241,0.06),transparent_40%)] pointer-events-none"></div>
+  <div class="absolute inset-0 bg-[radial-gradient(circle_at_70%_70%,rgba(139,92,246,0.06),transparent_40%)] pointer-events-none"></div>
+  
+  <!-- Interactive Background Particles -->
+  <div class="absolute inset-0 overflow-hidden pointer-events-none opacity-40">
+    <div class="absolute top-[10%] left-[20%] w-2 h-2 bg-indigo-500 rounded-full animate-ping" style="animation-duration: 3s"></div>
+    <div class="absolute top-[60%] left-[80%] w-3 h-3 bg-violet-500 rounded-full animate-ping" style="animation-duration: 5s"></div>
+    <div class="absolute top-[80%] left-[15%] w-1.5 h-1.5 bg-brand-accent rounded-full animate-pulse" style="animation-duration: 4s"></div>
+  </div>
+
+  <!-- Header -->
+  <header class="relative z-10 flex items-center justify-between px-8 py-5 border-b border-white/5 bg-slate-950/20 backdrop-blur-md">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/25">
+        <i data-lucide="layers" class="w-5 h-5 text-white"></i>
+      </div>
+      <div>
+        <h1 class="text-sm font-black uppercase tracking-widest text-white leading-none">SaaS Omnichannel</h1>
+        <p class="text-[9px] text-slate-400 font-bold tracking-widest uppercase mt-1">Presentación Ejecutiva Standalone</p>
+      </div>
+    </div>
+
+    <!-- Slide Index Tracker -->
+    <div class="hidden md:flex items-center gap-2 bg-white/5 border border-white/5 rounded-full px-4 py-1.5 text-xs font-bold text-slate-400">
+      <span id="slide-num" class="text-white">01</span>
+      <span class="text-slate-600">/</span>
+      <span id="slide-total" class="text-slate-500">17</span>
+    </div>
+
+    <!-- Control Buttons -->
+    <div class="flex items-center gap-3">
+      <button id="autoplay-btn" class="rounded-full px-4 py-1.5 text-[10px] font-bold uppercase border tracking-wider transition-all duration-300 bg-white/5 border-white/10 hover:bg-white/10 text-slate-300">
+        ▶ Autoplay
+      </button>
+      <a href="../frontend/index.html" class="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[10px] font-bold uppercase border border-white/10 hover:border-brand-primary/30 bg-slate-900/50 hover:bg-brand-primary-10 text-slate-300 hover:text-white transition-all duration-300">
+        <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+        <span>Ingresar ERP</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Autoplay Loading Bar -->
+  <div id="autoplay-progress-container" class="absolute top-[77px] left-0 right-0 h-0.5 bg-white/5 z-20 hidden">
+    <div id="autoplay-progress-bar" class="h-full bg-brand-primary w-0 transition-all duration-100 ease-linear"></div>
+  </div>
+
+  <!-- Slide Display Container -->
+  <main class="flex-1 flex flex-col lg:flex-row items-center justify-center p-6 lg:p-12 gap-8 lg:gap-16 relative z-10 overflow-y-auto">
+    
+    <!-- LEFT SIDE: Text details -->
+    <section class="w-full lg:w-[45%] flex flex-col justify-center space-y-6 text-left" id="text-panel">
+      <!-- Injected by JavaScript -->
+    </section>
+
+    <!-- RIGHT SIDE: Visual interactive mockup screen -->
+    <section class="w-full lg:w-[50%] h-[350px] lg:h-[480px] rounded-3xl bg-slate-950/40 border border-white/5 shadow-2xl relative overflow-hidden flex items-center justify-center p-6 backdrop-blur-sm glow-brand">
+      
+      <!-- Neon Border Decoration -->
+      <div class="absolute inset-0 border border-brand-primary/10 rounded-3xl pointer-events-none"></div>
+      
+      <!-- Interactive Mockup Screen inside right panel -->
+      <div id="visual-panel" class="w-full h-full flex items-center justify-center">
+        <!-- Injected by JavaScript -->
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer Navigation -->
+  <footer class="relative z-10 flex items-center justify-between px-8 py-5 border-t border-white/5 bg-slate-950/20 backdrop-blur-md">
+    <div class="flex items-center gap-2 text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+      <span>Tip: Navega usando las flechas ⬅ ➡ de tu teclado</span>
+    </div>
+
+    <!-- Bottom Indicator Dots -->
+    <div id="navigation-dots" class="hidden lg:flex items-center gap-2">
+      <!-- Injected by JavaScript -->
+    </div>
+
+    <!-- Navigation Buttons -->
+    <div class="flex items-center gap-3">
+      <button id="prev-btn" class="flex items-center justify-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white transition-all duration-300">
+        <i data-lucide="chevron-left" class="w-4 h-4"></i>
+      </button>
+      <button id="next-btn" class="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 text-white hover:opacity-90 shadow-lg shadow-violet-500/20 transition-all duration-300">
+        <i data-lucide="chevron-right" class="w-4 h-4"></i>
+      </button>
+    </div>
+  </footer>
+
+  <!-- PRESENTATION SCRIPT -->
+  <script>
+    // Slide database
+    const slidesData = [
+      {
+        tag: "BIENVENIDA",
+        title: "SaaS Omnichannel ERP & CRM",
+        subtitle: "La revolución de gestión comercial integrada y marca blanca",
+        desc: "La única plataforma multitenant que se adapta y re-estiliza dinámicamente según el rubro de cada cliente. Gestiona almacén, POS, fuerza de ventas, bots postventa e integración de balanzas en un solo lugar.",
+        simulator: "portada",
+        bullets: null
+      },
+      {
+        tag: "MÓDULO 01",
+        title: "Dashboard Maestro",
+        subtitle: "Analítica total y métricas en vivo",
+        bullets: [
+          "Monitoreo centralizado de ingresos en divisas (USD) y bolívares (VES).",
+          "Métricas en tiempo real de facturación, compras, devoluciones y utilidades.",
+          "Visualización multi-sucursal interactiva para juntas directivas."
+        ],
+        simulator: "dashboard"
+      },
+      {
+        tag: "MÓDULO 02",
+        title: "Ingreso de Datos",
+        subtitle: "Administración estructurada de recursos",
+        bullets: [
+          "Importación y exportación masiva de Clientes, Productos y Empleados.",
+          "Registro de transportes y vehículos para flotas de entregas delivery.",
+          "Asignación de roles y permisos granulares por departamento de trabajo."
+        ],
+        simulator: "ingreso"
+      },
+      {
+        tag: "MÓDULO 03",
+        title: "Fuerza de Ventas RTC",
+        subtitle: "La oficina móvil definitiva para vendedores de ruta",
+        bullets: [
+          "Check-in con geolocalización satelital (GPS) en el local del cliente.",
+          "Toma de auditorías e inventario del cliente para medir rotación de productos.",
+          "Registro instantáneo de presupuestos y pedidos sin stock (Backorders)."
+        ],
+        simulator: "visitas"
+      },
+      {
+        tag: "MÓDULO 04",
+        title: "Rutas y Viáticos",
+        subtitle: "Planificación de campo organizada y transparente",
+        bullets: [
+          "Agenda semanal de visitas comerciales coordinada con gerencia.",
+          "Carga de facturas fotográficas y solicitudes de viáticos para aprobación en línea.",
+          "Mapa de seguimiento GPS en tiempo real para gerentes de venta."
+        ],
+        simulator: "rutas"
+      },
+      {
+        tag: "MÓDULO 05",
+        title: "Balanza Digital",
+        subtitle: "Operaciones de pesaje integradas sin intermediarios",
+        bullets: [
+          "Calibración y pesaje en caliente para charcutería, carnicería y verdulería.",
+          "Generación automática de etiquetas con código PLU y peso codificado.",
+          "Lector directo en Caja/POS para un cobro ágil y sin digitación manual."
+        ],
+        simulator: "balanza"
+      },
+      {
+        tag: "MÓDULO 06",
+        title: "Punto de Venta (POS)",
+        subtitle: "Caja y facturación de alta velocidad",
+        bullets: [
+          "Atajos rápidos de teclado y lectura de código de barras.",
+          "Soporte de pagos múltiples: VES, USD, pago móvil, tarjetas y cuentas corrientes.",
+          "Caja chica automatizada con control de arqueos y turnos de cajeros."
+        ],
+        simulator: "pos"
+      },
+      {
+        tag: "MÓDULO 07",
+        title: "Pedidos y Compras",
+        subtitle: "Previsiones automáticas de stock inteligente",
+        bullets: [
+          "Cálculo inteligente de sugeridos de compras según velocidad de ventas.",
+          "Alertas de stock mínimo para evitar quiebres de inventario.",
+          "Emisión automática de órdenes de compra consolidadas por línea de proveedor."
+        ],
+        simulator: "pedidos"
+      },
+      {
+        tag: "MÓDULO 08",
+        title: "Delivery Exprés",
+        subtitle: "Logística interna y control de repartidores",
+        bullets: [
+          "Asignación rápida de comandas a motorizados según ubicación.",
+          "Monitoreo de estado de envíos en tiempo real (Despachado, En Ruta, Entregado).",
+          "Arqueo financiero exacto del cobrador a la vuelta de la ruta."
+        ],
+        simulator: "delivery"
+      },
+      {
+        tag: "MÓDULO 09",
+        title: "CRM ALO (Bot Inteligente)",
+        subtitle: "Automatización de postventa y bucle de satisfacción",
+        bullets: [
+          "Envío autónomo de encuestas de calidad a clientes vía WhatsApp.",
+          "Detección y clasificación de respuestas con IA (feliz, conforme, alerta).",
+          "Escalamiento automático al gerente en caso de incidencias de servicio."
+        ],
+        simulator: "crm"
+      },
+      {
+        tag: "MÓDULO 10",
+        title: "Estadísticas Avanzadas (VALE)",
+        subtitle: "Inteligencia de negocios a tu alcance",
+        bullets: [
+          "Gráficos analíticos de facturación semanal, mensual e interanual.",
+          "Cálculo de rentabilidad por línea de producto y departamento.",
+          "Identificación de productos estrella y stock de lenta rotación."
+        ],
+        simulator: "estadisticas"
+      },
+      {
+        tag: "MÓDULO 11",
+        title: "Gestión Almacén",
+        subtitle: "Control absoluto de lotes e ingresos",
+        bullets: [
+          "Trazabilidad por fecha de vencimiento crítica (FV) y alertas visuales.",
+          "Registro y justificación selectiva de mermas y averías.",
+          "Cotejo rápido de inventario físico versus stock digital del ERP."
+        ],
+        simulator: "almacen"
+      },
+      {
+        tag: "MÓDULO 12",
+        title: "Cartera y Créditos (YHORGE)",
+        subtitle: "Gestión de cuentas por cobrar sin riesgos",
+        bullets: [
+          "Asignación de límites de crédito comerciales y plazos de facturación.",
+          "Reporte de antigüedad de saldos vencidos y deudas activas.",
+          "Registro ágil de abonos en divisas y control de cobradores en campo."
+        ],
+        simulator: "cartera"
+      },
+      {
+        tag: "MÓDULO 13",
+        title: "Bancos y Tesorería",
+        subtitle: "Administración centralizada de cuentas bancarias",
+        bullets: [
+          "Control multi-banco en moneda local (VES) y custodias en moneda extranjera.",
+          "Registro de transferencias entre cuentas y arqueos de caja principal.",
+          "Actualización centralizada de la tasa de cambio oficial (BCV/Mercado)."
+        ],
+        simulator: "tesoreria"
+      },
+      {
+        tag: "MÓDULO 14",
+        title: "Ficha de Catálogo",
+        subtitle: "Especificaciones técnicas completas del artículo",
+        bullets: [
+          "Catalogación por marca, peso neto, presentación de empaque y ubicación.",
+          "Generación automática de códigos de barra internos y de empaque.",
+          "Asignación de múltiples listas de precios (Detalle, Mayor, Especial)."
+        ],
+        simulator: "catalogo"
+      },
+      {
+        tag: "MÓDULO 15",
+        title: "Consola SaaS Maestro",
+        subtitle: "Control de inquilinos y personalización de marca",
+        bullets: [
+          "Gestión de empresas asociadas (Tenants) y asignación de licencias.",
+          "Configuración dinámica de colores corporativos y logotipo por inquilino.",
+          "Activación de feature flags para ajustar el sistema al rubro de negocio."
+        ],
+        simulator: "saas"
+      },
+      {
+        tag: "CIERRE COMERCIAL",
+        title: "Lleva tu Negocio hoy al Siguiente Nivel",
+        subtitle: "SaaS Omnicanal flexible y escalable",
+        desc: "Optimiza tus ventas de campo, automatiza tus tiendas y toma el control de tu administración financiera. Una solución robusta diseñada para expandir tu red comercial.",
+        simulator: "cierre",
+        bullets: null
+      }
+    ];
+
+    let currentSlide = 0;
+    const totalSlides = slidesData.length;
+    let autoplayActive = false;
+    let autoplayInterval = null;
+    let progressInterval = null;
+    let progressPercent = 0;
+
+    // References to DOM elements
+    const textPanel = document.getElementById("text-panel");
+    const visualPanel = document.getElementById("visual-panel");
+    const slideNum = document.getElementById("slide-num");
+    const slideTotal = document.getElementById("slide-total");
+    const navigationDots = document.getElementById("navigation-dots");
+    const prevBtn = document.getElementById("prev-btn");
+    const nextBtn = document.getElementById("next-btn");
+    const autoplayBtn = document.getElementById("autoplay-btn");
+    const progressContainer = document.getElementById("autoplay-progress-container");
+    const progressBar = document.getElementById("autoplay-progress-bar");
+
+    // Initialize presentation
+    function init() {
+      slideTotal.innerText = String(totalSlides).padStart(2, "0");
+      renderDots();
+      renderSlide(currentSlide);
+      lucide.createIcons();
+    }
+
+    // Render slide indicators (dots)
+    function renderDots() {
+      navigationDots.innerHTML = "";
+      for (let i = 0; i < totalSlides; i++) {
+        const dot = document.createElement("button");
+        dot.className = `w-2 h-2 rounded-full transition-all duration-300 ${
+          i === currentSlide ? "bg-brand-primary w-6" : "bg-white/10 hover:bg-white/20"
+        }`;
+        dot.addEventListener("click", () => {
+          goToSlide(i);
+        });
+        navigationDots.appendChild(dot);
+      }
+    }
+
+    // Go to slide helper
+    function goToSlide(index) {
+      currentSlide = index;
+      renderSlide(currentSlide);
+      renderDots();
+      if (autoplayActive) {
+        resetAutoplayTimer();
+      }
+    }
+
+    function nextSlide() {
+      goToSlide((currentSlide + 1) % totalSlides);
+    }
+
+    function prevSlide() {
+      goToSlide((currentSlide - 1 + totalSlides) % totalSlides);
+    }
+
+    // Render Slide Contents
+    function renderSlide(index) {
+      const data = slidesData[index];
+      slideNum.innerText = String(index + 1).padStart(2, "0");
+
+      // Slide In Out Animations
+      textPanel.className = "w-full lg:w-[45%] flex flex-col justify-center space-y-6 text-left slide-enter";
+      visualPanel.className = "w-full h-full flex items-center justify-center slide-enter";
+
+      setTimeout(() => {
+        textPanel.classList.add("slide-active");
+        visualPanel.classList.add("slide-active");
+      }, 50);
+
+      // Build Left side HTML
+      let leftHtml = `
+        <div class="space-y-3">
+          <span class="inline-block text-[10px] font-black tracking-widest text-brand-primary uppercase bg-slate-900 px-3.5 py-1.5 rounded-full border border-white/5">
+            ${data.tag}
+          </span>
+          <h2 class="text-3xl lg:text-5xl font-black text-white tracking-tight leading-tight">
+            ${data.title}
+          </h2>
+          <h3 class="text-base lg:text-lg font-semibold text-brand-secondary">
+            ${data.subtitle}
+          </h3>
+        </div>
+        <div class="border-t border-white/5 my-4"></div>
+      `;
+
+      if (data.desc) {
+        leftHtml += `
+          <p class="text-sm lg:text-base text-slate-400 leading-relaxed font-light">
+            ${data.desc}
+          </p>
+        `;
+      }
+
+      if (data.bullets) {
+        leftHtml += `<ul class="space-y-4">`;
+        data.bullets.forEach((bullet) => {
+          leftHtml += `
+            <li class="flex items-start gap-3 group">
+              <span class="w-5 h-5 rounded-full bg-brand-primary/10 border border-brand-primary/20 text-brand-primary flex items-center justify-center text-xs font-bold shrink-0 mt-0.5 group-hover:bg-brand-primary group-hover:text-white transition-all duration-300">
+                ✓
+              </span>
+              <span class="text-xs lg:text-sm text-slate-300 leading-relaxed font-medium">
+                ${bullet}
+              </span>
+            </li>
+          `;
+        });
+        leftHtml += `</ul>`;
+      }
+
+      if (index === 0) {
+        leftHtml += `
+          <div class="pt-4">
+            <button onclick="nextSlide()" class="rounded-2xl bg-gradient-to-tr from-violet-600 to-indigo-500 hover:opacity-90 px-6 py-3.5 text-xs font-bold uppercase tracking-wider text-white shadow-xl shadow-violet-500/25 transition-all duration-300">
+              Comenzar Presentación →
+            </button>
+          </div>
+        `;
+      } else if (index === totalSlides - 1) {
+        leftHtml += `
+          <div class="flex gap-4 pt-4">
+            <button onclick="goToSlide(1)" class="rounded-2xl bg-slate-900 border border-white/10 hover:bg-slate-800 px-6 py-3.5 text-xs font-bold uppercase tracking-wider text-slate-300 transition-all duration-300">
+              ↺ Repetir
+            </button>
+            <a href="../frontend/index.html" class="rounded-2xl bg-gradient-to-tr from-violet-600 to-indigo-500 hover:opacity-90 px-6 py-3.5 text-xs font-bold uppercase tracking-wider text-white shadow-xl shadow-violet-500/25 transition-all duration-300">
+              Ingresar al SaaS
+            </a>
+          </div>
+        `;
+      }
+
+      textPanel.innerHTML = leftHtml;
+
+      // Render corresponding Simulator on the Right Side
+      renderSimulator(data.simulator);
+    }
+
+    // Autoplay Controller
+    function toggleAutoplay() {
+      autoplayActive = !autoplayActive;
+      if (autoplayActive) {
+        autoplayBtn.innerText = "⏸ Pausar";
+        autoplayBtn.className = "rounded-full px-4 py-1.5 text-[10px] font-bold uppercase border tracking-wider transition-all duration-300 bg-brand-primary border-brand-primary text-white shadow-lg shadow-brand-primary/20 animate-pulse";
+        progressContainer.classList.remove("hidden");
+        resetAutoplayTimer();
+      } else {
+        autoplayBtn.innerText = "▶ Autoplay";
+        autoplayBtn.className = "rounded-full px-4 py-1.5 text-[10px] font-bold uppercase border tracking-wider transition-all duration-300 bg-white/5 border-white/10 hover:bg-white/10 text-slate-300";
+        progressContainer.classList.add("hidden");
+        clearInterval(autoplayInterval);
+        clearInterval(progressInterval);
+      }
+    }
+
+    function resetAutoplayTimer() {
+      clearInterval(autoplayInterval);
+      clearInterval(progressInterval);
+      
+      progressPercent = 0;
+      progressBar.style.width = "0%";
+
+      const slideDuration = 8000; // 8 seconds per slide
+      const stepDuration = 100; // update progress bar every 100ms
+      const totalSteps = slideDuration / stepDuration;
+      let currentStep = 0;
+
+      progressInterval = setInterval(() => {
+        currentStep++;
+        progressPercent = (currentStep / totalSteps) * 100;
+        progressBar.style.width = `${progressPercent}%`;
+      }, stepDuration);
+
+      autoplayInterval = setInterval(() => {
+        nextSlide();
+      }, slideDuration);
+    }
+
+    // Simulator selector
+    function renderSimulator(type) {
+      visualPanel.innerHTML = "";
+      let html = "";
+
+      switch (type) {
+        case "portada":
+          html = `
+            <div class="flex flex-col items-center justify-center text-center space-y-5">
+              <div class="relative w-44 h-44 flex items-center justify-center">
+                <div class="absolute w-40 h-40 rounded-full border border-violet-500/10 pulse-glow"></div>
+                <div class="absolute w-32 h-32 rounded-full border border-t-violet-500 border-r-indigo-500 animate-spin" style="animation-duration: 3s"></div>
+                <div class="absolute w-24 h-24 rounded-full border border-b-cyan-400 animate-spin" style="animation-duration: 6s; animation-direction: reverse"></div>
+                <div class="w-16 h-16 rounded-3xl bg-gradient-to-tr from-violet-600 to-indigo-500 flex items-center justify-center shadow-2xl shadow-violet-500/40 relative z-10">
+                  <i data-lucide="sparkles" class="w-8 h-8 text-white"></i>
+                </div>
+              </div>
+              <div class="space-y-1.5">
+                <h4 class="text-xs font-bold tracking-widest text-violet-400 uppercase">SaaS Enterprise Platform</h4>
+                <p class="text-[10px] text-slate-500 font-semibold tracking-wider uppercase">Marca Blanca / Multi-Tenant / SQLite</p>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "dashboard":
+          html = `
+            <div class="w-full max-w-sm rounded-3xl bg-slate-900 border border-white/5 p-6 space-y-4 shadow-xl text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dashboard General</span>
+                <span class="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold animate-pulse">● En Vivo</span>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div class="bg-slate-950/60 p-4 rounded-2xl border border-white/5 space-y-1">
+                  <span class="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Ventas de Hoy</span>
+                  <p class="text-lg font-black text-white" id="dash-sales">$1,280.50</p>
+                  <p class="text-[9px] text-emerald-400 font-bold">▲ +14% vs ayer</p>
+                </div>
+                <div class="bg-slate-950/60 p-4 rounded-2xl border border-white/5 space-y-1">
+                  <span class="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Transacciones</span>
+                  <p class="text-lg font-black text-white">1,492</p>
+                  <p class="text-[9px] text-violet-400 font-bold">Eficiencia: 100%</p>
+                </div>
+              </div>
+              <div class="space-y-2 bg-slate-950/40 p-4 rounded-2xl border border-white/5">
+                <div class="flex justify-between text-[9px] text-slate-400 font-bold">
+                  <span>Capacidad Operativa Almacén</span>
+                  <span class="text-white">74%</span>
+                </div>
+                <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div class="h-full bg-gradient-to-r from-violet-600 to-indigo-500 rounded-full" style="width: 74%"></div>
+                </div>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "ingreso":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-2xl p-5 shadow-xl space-y-3 text-left">
+              <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-white/5 pb-2">Base de Datos Central</h4>
+              <div class="space-y-2" id="ingreso-list">
+                <!-- Sincronizaciones animadas por JS -->
+              </div>
+            </div>
+          `;
+          break;
+
+        case "visitas":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-3xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center gap-2 border-b border-white/5 pb-2">
+                <i data-lucide="smartphone" class="w-4 h-4 text-violet-400"></i>
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Visita Clientes (Vendedor RTC)</span>
+              </div>
+              <div class="bg-slate-950/60 p-3 rounded-2xl border border-white/5 space-y-1.5">
+                <div class="flex justify-between text-[9px] text-slate-400 font-bold">
+                  <span>GPS Ubicación RTC</span>
+                  <span class="text-emerald-400 font-black">Coincide</span>
+                </div>
+                <p class="text-xs font-mono font-bold text-slate-300" id="visita-gps">Lat: 10.4820 | Lng: -66.9040</p>
+              </div>
+              <div class="bg-slate-950/40 p-3 rounded-xl border border-white/5 space-y-2">
+                <div class="flex justify-between text-[9px] text-slate-400 font-bold">
+                  <span>Subida de Foto Fachada</span>
+                  <span class="text-violet-400 font-bold" id="foto-pct">0%</span>
+                </div>
+                <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div id="foto-bar" class="h-full bg-violet-600 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "rutas":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-2xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Rutas Semanales</span>
+                <span class="text-emerald-400">En Progreso</span>
+              </div>
+              <!-- Track line map mock -->
+              <div class="relative h-24 bg-slate-950 rounded-2xl border border-white/5 p-4 flex justify-between items-center overflow-hidden">
+                <div class="absolute top-1/2 left-6 right-6 h-0.5 bg-slate-850 -translate-y-1/2"></div>
+                <div id="p1" class="w-7 h-7 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center text-xs font-bold z-10 transition-all">1</div>
+                <div id="p2" class="w-7 h-7 rounded-full bg-slate-900 border border-slate-700 text-slate-500 flex items-center justify-center text-xs font-bold z-10 transition-all">2</div>
+                <div id="p3" class="w-7 h-7 rounded-full bg-slate-900 border border-slate-700 text-slate-500 flex items-center justify-center text-xs font-bold z-10 transition-all">3</div>
+              </div>
+              <div class="bg-emerald-500/5 border border-emerald-500/10 p-3.5 rounded-xl flex items-center justify-between">
+                <div>
+                  <p class="text-[9px] text-slate-500 uppercase tracking-widest font-black">Ruta del RTC</p>
+                  <p class="text-xs font-bold text-emerald-400">Viáticos Aprobados</p>
+                </div>
+                <p class="text-base font-black text-emerald-400">$180.00</p>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "balanza":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-3xl p-5 shadow-2xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Balanza Digital (PLU #012)</span>
+                <span class="text-violet-400 text-[9px] font-bold">Charcutería</span>
+              </div>
+              <div class="bg-slate-950 border border-violet-500/20 p-4 rounded-2xl flex flex-col items-center justify-center shadow-[inset_0_0_10px_rgba(139,92,246,0.1)]">
+                <span class="text-[9px] text-violet-400 tracking-widest uppercase font-bold">Peso Digital</span>
+                <p id="bal-weight" class="text-3xl font-mono font-black text-white tracking-wider mt-1">0.000 kg</p>
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-xs bg-slate-950/40 p-3 rounded-xl border border-white/5 font-semibold">
+                <div class="text-slate-500">Precio USD/kg:</div>
+                <div class="text-slate-300 text-right">$5.50</div>
+                <div class="text-slate-500">Importe USD:</div>
+                <div id="bal-price" class="text-violet-400 text-right font-bold">$0.00</div>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "pos":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-3xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Terminal POS Caja #1</span>
+                <span class="text-brand-accent">Venta</span>
+              </div>
+              <div class="bg-slate-950/60 p-3 rounded-2xl border border-white/5 space-y-2 max-h-36 overflow-y-auto" id="pos-items">
+                <!-- Artículos agregados dinámicamente -->
+              </div>
+              <div class="bg-violet-600/10 p-3 rounded-xl border border-violet-500/20 flex justify-between items-center">
+                <span class="text-xs font-bold text-slate-300">Total a Cobrar</span>
+                <span class="text-lg font-black text-white" id="pos-total">$0.00</span>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "pedidos":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-2xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Necesidad de Compra</span>
+                <span class="text-rose-400 font-bold animate-pulse">● Alerta</span>
+              </div>
+              <div class="bg-rose-500/5 border border-rose-500/10 p-3 rounded-xl flex items-center justify-between">
+                <div>
+                  <p class="text-[10px] font-bold text-rose-400">Fertilizante NPK 50kg</p>
+                  <p class="text-[9px] text-slate-500 font-semibold">Stock: 1 saco (Mínimo: 4)</p>
+                </div>
+                <span class="text-[9px] bg-rose-500/10 text-rose-400 px-2 py-0.5 rounded-full font-bold">Bajo Mínimo</span>
+              </div>
+              <div class="text-center text-slate-500 text-xs py-1 animate-pulse">⬇ Orden de Compra Generada ⬇</div>
+              <div class="bg-emerald-500/5 border border-emerald-500/10 p-3 rounded-xl flex items-center justify-between">
+                <div>
+                  <p class="text-[10px] font-bold text-emerald-400">OC-0943 - Distribuidora Agro</p>
+                  <p class="text-[9px] text-slate-500 font-semibold">Cantidad sugerida de reposición</p>
+                </div>
+                <span class="text-xs font-black text-emerald-400">+25 un</span>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "delivery":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-2xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Ruta Motorizado Delivery</span>
+                <span class="text-emerald-400">Despachado</span>
+              </div>
+              <div class="bg-slate-950/60 p-3.5 rounded-xl border border-white/5 space-y-1">
+                <p class="text-[10px] text-slate-500 font-bold uppercase">Dirección de Entrega</p>
+                <p class="text-xs font-bold text-slate-200">Av. Principal, Edificio El Toro</p>
+              </div>
+              <div class="h-16 bg-slate-950/40 rounded-xl border border-white/5 relative overflow-hidden flex items-center px-4">
+                <div class="absolute top-1/2 left-4 right-4 h-0.5 bg-slate-800 -translate-y-1/2"></div>
+                <div id="del-truck" class="absolute text-xl transition-all duration-1000 ease-out -translate-y-1/2 top-1/2" style="left: 10%">🛵</div>
+                <div class="absolute right-4 text-xs">🏠</div>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "crm":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-3xl p-5 shadow-2xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Asistente WhatsApp ALO</span>
+                <span class="text-emerald-400 font-bold">Activo</span>
+              </div>
+              <div id="crm-chat-box" class="space-y-3 h-40 overflow-y-auto pr-1">
+                <!-- Burbujas de chat animadas por JS -->
+              </div>
+            </div>
+          `;
+          break;
+
+        case "estadisticas":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-2xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Rendimiento Mensual</span>
+                <span>KPIs</span>
+              </div>
+              <div class="h-28 flex items-end gap-3 bg-slate-950/80 p-4 rounded-xl border border-white/5 relative overflow-hidden">
+                <div class="absolute top-1/3 left-0 right-0 h-0.5 border-t border-dashed border-emerald-500/30"></div>
+                <div class="h-[20%] w-full bg-slate-800 rounded-t"></div>
+                <div class="h-[45%] w-full bg-slate-800 rounded-t"></div>
+                <div class="h-[60%] w-full bg-slate-800 rounded-t"></div>
+                <div class="h-[80%] w-full bg-violet-600 rounded-t shadow-lg shadow-violet-500/20"></div>
+              </div>
+              <div class="flex justify-between items-center text-xs font-bold bg-slate-950/40 p-2.5 rounded-xl border border-white/5">
+                <span class="text-slate-500">Rentabilidad</span>
+                <span class="text-emerald-400">+36.2%</span>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "almacen":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-2xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Control de Inventario</span>
+                <span class="text-violet-400 font-bold">Lote Tracker</span>
+              </div>
+              <div class="bg-slate-950/60 p-3.5 rounded-xl border border-white/5 space-y-2">
+                <div class="flex justify-between items-center border-b border-white/5 pb-1">
+                  <span class="text-[10px] font-black text-white">Semillas de Tomate</span>
+                  <span class="text-[8px] bg-violet-500/10 text-violet-400 px-2 py-0.5 rounded-full font-bold">Ingreso</span>
+                </div>
+                <div class="grid grid-cols-2 gap-1 text-[9px] text-slate-500 font-mono font-bold">
+                  <div>LOTE:</div>
+                  <div class="text-slate-300 text-right">L-TOM-02</div>
+                  <div>CANTIDAD:</div>
+                  <div class="text-slate-300 text-right">50 sobres</div>
+                  <div>FV EXPIRA:</div>
+                  <div class="text-rose-400 text-right">15-Mar-2027</div>
+                </div>
+              </div>
+              <div class="text-center py-2 bg-violet-500/10 border border-violet-500/20 rounded-xl text-xs font-bold text-white animate-pulse">
+                🔍 ESCÁNER DE CÓDIGO ACTIVO
+              </div>
+            </div>
+          `;
+          break;
+
+        case "cartera":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-2xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Cartera de Clientes</span>
+                <span class="text-rose-400 font-bold">Cuentas por Cobrar</span>
+              </div>
+              <div class="bg-slate-950/60 p-4 rounded-xl border border-white/5 space-y-3">
+                <div class="flex justify-between items-center">
+                  <p class="text-xs font-black text-white">Agropecuaria El Torito</p>
+                  <span class="text-[8px] bg-rose-500/10 text-rose-400 px-2 py-0.5 rounded-full font-bold">Pendiente</span>
+                </div>
+                <div class="grid grid-cols-2 gap-1.5 text-[9px] font-bold uppercase font-mono">
+                  <div class="text-slate-500">Límite Crédito:</div>
+                  <div class="text-slate-300 text-right">$5,000.00</div>
+                  <div class="text-slate-500">Deuda Consumida:</div>
+                  <div class="text-rose-400 text-right font-black">$3,450.00</div>
+                </div>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "tesoreria":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-2xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Cuentas y Bancos</span>
+                <span class="text-brand-primary">Tasa Cambiaria</span>
+              </div>
+              <div class="space-y-2">
+                <div class="bg-slate-950/60 p-3 rounded-xl border border-white/5 flex justify-between items-center text-xs font-bold">
+                  <span class="text-slate-500">Banco Provincial (VES):</span>
+                  <span class="text-slate-200">18,500.00 VES</span>
+                </div>
+                <div class="bg-slate-950/60 p-3 rounded-xl border border-white/5 flex justify-between items-center text-xs font-bold">
+                  <span class="text-slate-500">Custodia Dólares (USD):</span>
+                  <span class="text-emerald-400">$2,840.00 USD</span>
+                </div>
+              </div>
+              <div class="bg-violet-600/10 p-3.5 rounded-xl border border-violet-500/20 flex justify-between items-center">
+                <span class="text-xs font-bold text-slate-300">Tasa Oficial BCV</span>
+                <span class="text-sm font-mono font-black text-white" id="tesoreria-bcv">36.50 VES/USD</span>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "catalogo":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-2xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Ficha Catálogo</span>
+                <span>SKU: A001</span>
+              </div>
+              <div class="bg-slate-950/60 p-4 rounded-xl border border-white/5 space-y-3">
+                <h5 class="text-xs font-black text-white">Fertilizante NPK (Saco 50kg)</h5>
+                <div class="border-t border-white/5"></div>
+                <div class="grid grid-cols-2 gap-1.5 text-[9px] font-bold text-slate-400 uppercase font-mono">
+                  <div>LÍNEA:</div>
+                  <div class="text-slate-200 text-right">Agroquímicos</div>
+                  <div>PROVEEDOR:</div>
+                  <div class="text-slate-200 text-right">AgroSuplidores</div>
+                  <div>CÓDIGO BARRAS:</div>
+                  <div class="text-slate-200 text-right">759102030401</div>
+                </div>
+              </div>
+            </div>
+          `;
+          break;
+
+        case "saas":
+          html = `
+            <div class="w-full max-w-xs bg-slate-900 border border-white/5 rounded-3xl p-5 shadow-xl space-y-4 text-left">
+              <div class="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] font-bold text-slate-400 uppercase">
+                <span>Consola SaaS Inquilinos</span>
+                <span>Marca Blanca</span>
+              </div>
+              <div class="bg-slate-950/60 p-4 rounded-xl border border-white/5 space-y-3">
+                <p class="text-[10px] text-slate-500 font-bold uppercase">Color Primario del Inquilino:</p>
+                <div class="flex items-center gap-3">
+                  <div id="saas-color-circle" class="w-8 h-8 rounded-full border border-white/20 transition-all duration-500" style="background-color: #8b5cf6"></div>
+                  <span id="saas-color-text" class="text-xs font-bold text-slate-300 font-mono">#8b5cf6</span>
+                </div>
+              </div>
+              <p class="text-[9px] text-slate-500 text-center font-bold uppercase">Inyección de CSS variables en caliente</p>
+            </div>
+          `;
+          break;
+
+        case "cierre":
+          html = `
+            <div class="flex flex-col items-center justify-center text-center space-y-5">
+              <div class="w-20 h-20 rounded-full bg-gradient-to-tr from-violet-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/30 relative">
+                <i data-lucide="rocket" class="w-10 h-10 text-white"></i>
+                <div class="absolute inset-0 rounded-full border border-violet-500 animate-ping opacity-25"></div>
+              </div>
+              <div class="space-y-1">
+                <h4 class="text-base font-black text-white">¿Todo Listo para la Demostración?</h4>
+                <p class="text-xs text-slate-400 max-w-xs">Instala el ecosistema completo y optimiza tus ventas.</p>
+              </div>
+            </div>
+          `;
+          break;
+      }
+
+      visualPanel.innerHTML = html;
+      lucide.createIcons();
+
+      // Trigger animations for the selected simulator
+      startSimulation(type);
+    }
+
+    // Interactive simulations loops
+    let activeSimulationInterval = null;
+    function startSimulation(type) {
+      if (activeSimulationInterval) clearInterval(activeSimulationInterval);
+
+      switch (type) {
+        case "dashboard":
+          let salesVal = 1280.50;
+          activeSimulationInterval = setInterval(() => {
+            salesVal += Math.random() * 30;
+            const el = document.getElementById("dash-sales");
+            if (el) el.innerText = "$" + salesVal.toLocaleString("es-VE", { minimumFractionDigits: 2 });
+          }, 1500);
+          break;
+
+        case "ingreso":
+          const items = ["Clientes Sincronizados", "Catálogo de Productos", "Vehículos de Delivery", "Proveedores ERP"];
+          let step = 0;
+          const container = document.getElementById("ingreso-list");
+          
+          function drawIngresoList() {
+            if (!container) return;
+            let listHtml = "";
+            items.forEach((item, idx) => {
+              const isDone = step > idx;
+              const isCurrent = step === idx;
+              listHtml += `
+                <div class="flex items-center justify-between p-2.5 rounded-xl border transition-all duration-300 ${
+                  isDone
+                    ? "bg-emerald-500/5 border-emerald-500/10 text-emerald-400"
+                    : isCurrent
+                    ? "bg-violet-600/15 border-violet-500/20 text-white animate-pulse"
+                    : "bg-slate-950/40 border-transparent text-slate-500"
+                }">
+                  <span class="text-xs font-semibold">${item}</span>
+                  <span class="text-xs font-bold">${isDone ? "✓ Listo" : isCurrent ? "⏳ Cargando..." : "● Esperando"}</span>
+                </div>
+              `;
+            });
+            container.innerHTML = listHtml;
+          }
+          
+          drawIngresoList();
+          activeSimulationInterval = setInterval(() => {
+            step = (step + 1) % (items.length + 1);
+            drawIngresoList();
+          }, 1500);
+          break;
+
+        case "visitas":
+          let pct = 0;
+          let latVal = 10.4820;
+          let lngVal = -66.9040;
+          
+          activeSimulationInterval = setInterval(() => {
+            pct += 25;
+            if (pct > 100) {
+              pct = 0;
+              latVal = +(10.4820 + Math.random() * 0.004).toFixed(4);
+              lngVal = +(-66.9040 - Math.random() * 0.004).toFixed(4);
+              const gpsEl = document.getElementById("visita-gps");
+              if (gpsEl) gpsEl.innerText = `Lat: ${latVal} | Lng: ${lngVal}`;
+            }
+            const pctEl = document.getElementById("foto-pct");
+            const barEl = document.getElementById("foto-bar");
+            if (pctEl && barEl) {
+              pctEl.innerText = `${pct}%`;
+              barEl.style.width = `${pct}%`;
+            }
+          }, 1000);
+          break;
+
+        case "rutas":
+          let rStep = 0;
+          activeSimulationInterval = setInterval(() => {
+            rStep = (rStep + 1) % 3;
+            const p1 = document.getElementById("p1");
+            const p2 = document.getElementById("p2");
+            const p3 = document.getElementById("p3");
+            if (p1 && p2 && p3) {
+              p1.className = `w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold z-10 transition-all ${rStep >= 0 ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400 scale-110" : "bg-slate-900 border-slate-700 text-slate-500"}`;
+              p2.className = `w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold z-10 transition-all ${rStep >= 1 ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400 scale-110" : "bg-slate-900 border-slate-700 text-slate-500"}`;
+              p3.className = `w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold z-10 transition-all ${rStep >= 2 ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400 scale-110" : "bg-slate-900 border-slate-700 text-slate-500"}`;
+            }
+          }, 1500);
+          break;
+
+        case "balanza":
+          let weightVal = 0.0;
+          activeSimulationInterval = setInterval(() => {
+            weightVal += 0.45;
+            if (weightVal > 3.0) {
+              weightVal = 0.0;
+            }
+            const wEl = document.getElementById("bal-weight");
+            const pEl = document.getElementById("bal-price");
+            if (wEl && pEl) {
+              wEl.innerText = weightVal.toFixed(3) + " kg";
+              pEl.innerText = "$" + (weightVal * 5.5).toFixed(2);
+            }
+          }, 800);
+          break;
+
+        case "pos":
+          let pCount = 1;
+          const posContainer = document.getElementById("pos-items");
+          const posTotal = document.getElementById("pos-total");
+          const pItems = [
+            { n: "Semillas de Tomate Híbrido", p: 18.50 },
+            { n: "Machete Bellota 22 Pulgadas", p: 22.00 },
+            { n: "Fertilizante NPK 50kg Saco", p: 45.00 }
+          ];
+
+          function drawPOSCart() {
+            if (!posContainer) return;
+            let cartHtml = "";
+            let totalVal = 0;
+            for (let i = 0; i < pCount; i++) {
+              cartHtml += `
+                <div class="flex justify-between items-center text-xs text-slate-300">
+                  <span>${pItems[i].n}</span>
+                  <span class="font-mono text-white">$${pItems[i].p.toFixed(2)}</span>
+                </div>
+              `;
+              totalVal += pItems[i].p;
+            }
+            posContainer.innerHTML = cartHtml;
+            if (posTotal) posTotal.innerText = "$" + totalVal.toFixed(2);
+          }
+
+          drawPOSCart();
+          activeSimulationInterval = setInterval(() => {
+            pCount = (pCount % 3) + 1;
+            drawPOSCart();
+          }, 2000);
+          break;
+
+        case "delivery":
+          let truckX = 10;
+          activeSimulationInterval = setInterval(() => {
+            truckX += 20;
+            if (truckX > 80) truckX = 10;
+            const truck = document.getElementById("del-truck");
+            if (truck) truck.style.left = `${truckX}%`;
+          }, 1000);
+          break;
+
+        case "crm":
+          let chatStep = 0;
+          const chatBox = document.getElementById("crm-chat-box");
+          const chatMsgs = [
+            { r: "bot", m: "🤖 <strong>Bot ALO:</strong> Hola Agropecuaria El Torito, ¿rotaron las semillas de tomate?" },
+            { r: "client", m: "👨🌾 <strong>Cliente:</strong> Hola. Sí, excelente calidad. Queremos ordenar 3 sobres más." },
+            { r: "bot", m: "🤖 <strong>Bot ALO:</strong> ¡Listo! Generamos un pre-pedido por 3 sobres en su cuenta." }
+          ];
+
+          function drawChat() {
+            if (!chatBox) return;
+            let chatHtml = "";
+            for (let i = 0; i < chatStep; i++) {
+              const isClient = chatMsgs[i].r === "client";
+              chatHtml += `
+                <div class="p-3 rounded-2xl text-xs border border-white/5 transition-all duration-300 ${
+                  isClient
+                    ? "bg-violet-600/10 text-violet-400 rounded-tr-none max-w-[80%] ml-auto text-right"
+                    : "bg-slate-800/80 text-white rounded-tl-none max-w-[85%]"
+                }">
+                  ${chatMsgs[i].m}
+                </div>
+              `;
+            }
+            chatBox.innerHTML = chatHtml;
+            chatBox.scrollTop = chatBox.scrollHeight;
+          }
+
+          drawChat();
+          activeSimulationInterval = setInterval(() => {
+            chatStep = (chatStep + 1) % 4;
+            drawChat();
+          }, 2000);
+          break;
+
+        case "tesoreria":
+          let rateVal = 36.50;
+          activeSimulationInterval = setInterval(() => {
+            rateVal += (Math.random() - 0.5) * 0.06;
+            const el = document.getElementById("tesoreria-bcv");
+            if (el) el.innerText = rateVal.toFixed(2) + " VES/USD";
+          }, 2000);
+          break;
+
+        case "saas":
+          let cIdx = 0;
+          const sColors = ["#8b5cf6", "#10b981", "#0ea5e9", "#f43f5e"];
+          activeSimulationInterval = setInterval(() => {
+            cIdx = (cIdx + 1) % sColors.length;
+            const circle = document.getElementById("saas-color-circle");
+            const text = document.getElementById("saas-color-text");
+            if (circle && text) {
+              circle.style.backgroundColor = sColors[cIdx];
+              text.innerText = sColors[cIdx];
+            }
+          }, 1500);
+          break;
+      }
+    }
+
+    // Keyboard bindings listener
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === " ") {
+        e.preventDefault();
+        nextSlide();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        prevSlide();
+      }
+    });
+
+    prevBtn.addEventListener("click", prevSlide);
+    nextBtn.addEventListener("click", nextSlide);
+    autoplayBtn.addEventListener("click", toggleAutoplay);
+
+    // Run presentation
+    init();
+  </script>
+</body>
+</html>
