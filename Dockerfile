@@ -24,8 +24,9 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copiar el código del backend FastAPI
+# Copiar el código del backend FastAPI e inicializadores de base de datos
 COPY app/ ./app/
+COPY create_tables.py seed_demo.py ./
 
 # Copiar los archivos compilados del frontend al directorio esperado por el backend
 COPY --from=frontend-builder /build/dist ./frontend/dist
@@ -33,5 +34,5 @@ COPY --from=frontend-builder /build/dist ./frontend/dist
 # Exponer el puerto 8000
 EXPOSE 8000
 
-# Comando para ejecutar el servidor
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Comando para ejecutar el servidor, creando y poblando la base de datos primero
+CMD ["sh", "-c", "python create_tables.py && python seed_demo.py && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
