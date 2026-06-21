@@ -2,7 +2,7 @@ import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import apiClient from "../api/client";
 
 const PROVEEDORES = ["Distribuidora Polar", "Alimentos Mary", "Vatel C.A.", "Cargill Venezuela", "Proveedor Local / Otro"];
-const PRESENTACIONES = ["Unidad", "Empaque", "Bulto"];
+const PRESENTACIONES = ["Unidad", "Empaque", "Bulto", "Botella", "Frasco", "Pote", "Lata", "Caja", "Bolsa", "Blíster", "Granel"];
 
 const initial = {
   // Información básica
@@ -521,6 +521,18 @@ export default function FichaProducto() {
             >
               🍅 Fruver: Tomate Manzano
             </button>
+            <button
+              type="button"
+              onClick={() => simularEscanerIA(
+                "chicco_lotion_frontal.png", 
+                "chicco_lotion_trasera.png",
+                "https://images.unsplash.com/photo-1515003197210-e0cd71810b5f?auto=format&fit=crop&w=400&q=80",
+                "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=400&q=80"
+              )}
+              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+            >
+              🧴 Bebé: Loción Chicco
+            </button>
           </div>
         </div>
 
@@ -594,8 +606,23 @@ export default function FichaProducto() {
                 </select>
               </label>
               <label className="flex flex-col">
-                <span className={labelCls}>Peso exacto (kg)</span>
-                <input type="number" step="0.001" min="0" className={inputCls} value={form.peso} onChange={(e) => set("peso", e.target.value)} placeholder="0.000" />
+                <span className={labelCls}>
+                  {["Cuidado Personal", "Bebidas", "Limpieza"].includes(form.linea) ? "Volumen / Contenido (ml)" : "Peso exacto (kg)"}
+                </span>
+                <div className="relative mt-1">
+                  <input
+                    type="number"
+                    step={["Cuidado Personal", "Bebidas", "Limpieza"].includes(form.linea) ? "1" : "0.001"}
+                    min="0"
+                    className={`${inputCls} pr-12 mt-0`}
+                    value={form.peso}
+                    onChange={(e) => set("peso", e.target.value)}
+                    placeholder={["Cuidado Personal", "Bebidas", "Limpieza"].includes(form.linea) ? "200" : "0.000"}
+                  />
+                  <span className="absolute right-3 top-2.5 text-slate-400 text-xs font-bold font-mono">
+                    {["Cuidado Personal", "Bebidas", "Limpieza"].includes(form.linea) ? "ml" : "kg"}
+                  </span>
+                </div>
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Ubicación física (Pasillo / Estante)</span>
@@ -603,7 +630,20 @@ export default function FichaProducto() {
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Stock Mínimo Alerta</span>
-                <input type="number" step="0.001" min="0" className={inputCls} value={form.stock_minimo} onChange={(e) => set("stock_minimo", e.target.value)} placeholder="0.000" />
+                <div className="relative mt-1">
+                  <input
+                    type="number"
+                    step={form.tipo_venta === "peso" ? "0.001" : "1"}
+                    min="0"
+                    className={`${inputCls} pr-12 mt-0`}
+                    value={form.stock_minimo}
+                    onChange={(e) => set("stock_minimo", e.target.value)}
+                    placeholder={form.tipo_venta === "peso" ? "0.000" : "0"}
+                  />
+                  <span className="absolute right-3 top-2.5 text-slate-400 text-xs font-bold font-mono">
+                    {form.tipo_venta === "peso" ? "kg" : "und"}
+                  </span>
+                </div>
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Tipo de Venta</span>
