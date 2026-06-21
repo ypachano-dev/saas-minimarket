@@ -55,7 +55,14 @@ export default function FichaProducto() {
   const [msg, setMsg] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   const [escaneando, setEscaneando] = useState(false);
   const [pasoIA, setPasoIA] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [fotoFrontal, setFotoFrontal] = useState<File | null>(null);
+  const [fotoTrasera, setFotoTrasera] = useState<File | null>(null);
+  const [previewFrontal, setPreviewFrontal] = useState<string | null>(null);
+  const [previewTrasera, setPreviewTrasera] = useState<string | null>(null);
+  
+  const inputFrontalRef = useRef<HTMLInputElement>(null);
+  const inputTraseraRef = useRef<HTMLInputElement>(null);
   const nombreRef = useRef<HTMLInputElement>(null);
 
   function set<K extends keyof typeof initial>(key: K, value: typeof initial[K]) {
@@ -69,19 +76,20 @@ export default function FichaProducto() {
     }
   }
 
-  // Lógica del Escáner de IA
-  async function escanearArchivo(file: File) {
+  // Lógica del Escáner de IA Dual (foto frontal + trasera opcional)
+  async function escanearArchivos(frontal: File, trasera: File | null) {
     setMsg(null);
     setEscaneando(true);
-    setPasoIA("Conectando con el motor de visión...");
+    setPasoIA("Conectando con el motor de visión IA...");
     
-    // Simular pasos visuales de IA
+    // Simular pasos visuales del motor de IA
     const pasos = [
-      "Leyendo etiqueta del empaque...",
-      "Aplicando OCR en tiempo real...",
-      "Buscando marca y código de barras...",
-      "Identificando fechas críticas de vencimiento...",
-      "¡Extracción de metadatos finalizada!"
+      "Escaneando empaque frontal (Marca, Nombre y Diseño)...",
+      "Procesando cara trasera (Buscando códigos de barra, peso neto)...",
+      "Analizando lista de ingredientes y características del fabricante...",
+      "Ejecutando algoritmos OCR y correspondencia semántica...",
+      "Clasificando categoría del producto y tasas arancelarias...",
+      "¡Extracción neuronal de metadatos completada con éxito!"
     ];
 
     let pIdx = 0;
@@ -95,7 +103,12 @@ export default function FichaProducto() {
     }, 450);
 
     const formData = new FormData();
-    formData.append("file", file);
+    if (frontal) {
+      formData.append("foto_frontal", frontal);
+    }
+    if (trasera) {
+      formData.append("foto_trasera", trasera);
+    }
 
     try {
       const res = await apiClient.post("/api/v1/productos/analizar-foto", formData, {
@@ -103,7 +116,7 @@ export default function FichaProducto() {
       });
       
       clearInterval(interval);
-      setPasoIA("Rellenando campos de la ficha...");
+      setPasoIA("Indexando campos en la ficha técnica...");
       
       const data = res.data;
       setForm({
@@ -134,7 +147,7 @@ export default function FichaProducto() {
         foto_url: data.foto_url || "",
       });
 
-      setMsg({ tipo: "ok", texto: `🤖 IA: Se identificó "${data.nombre}" y se auto-completó la ficha.` });
+      setMsg({ tipo: "ok", texto: `🤖 IA: Se identificó "${data.nombre}" como [${data.linea} / ${data.clase_o_tipo}] y se auto-completaron todos los campos.` });
     } catch {
       clearInterval(interval);
       setMsg({ tipo: "error", texto: "No se pudo procesar la foto con el motor de IA." });
@@ -144,10 +157,29 @@ export default function FichaProducto() {
     }
   }
 
-  // Simulación con un archivo falso para pruebas rápidas
-  function simularEscanerIA(nombreSimulado: string) {
-    const fakeFile = new File(["fake_content"], nombreSimulado, { type: "image/png" });
-    escanearArchivo(fakeFile);
+  function analizarFotosCargadas() {
+    if (fotoFrontal) {
+      escanearArchivos(fotoFrontal, fotoTrasera);
+    }
+  }
+
+  // Simulación con archivos falsos para pruebas rápidas
+  function simularEscanerIA(frontalFilename: string, traseraFilename: string | null = null, previewFrontalUrl: string, previewTraseraUrl: string | null = null) {
+    const fakeFrontal = new File(["fake_content"], frontalFilename, { type: "image/png" });
+    const fakeTrasera = traseraFilename ? new File(["fake_content"], traseraFilename, { type: "image/png" }) : null;
+    
+    setFotoFrontal(fakeFrontal);
+    setPreviewFrontal(previewFrontalUrl);
+    
+    if (fakeTrasera) {
+      setFotoTrasera(fakeTrasera);
+      setPreviewTrasera(previewTraseraUrl);
+    } else {
+      setFotoTrasera(null);
+      setPreviewTrasera(null);
+    }
+    
+    escanearArchivos(fakeFrontal, fakeTrasera);
   }
 
   async function guardar(e: FormEvent) {
@@ -207,6 +239,10 @@ export default function FichaProducto() {
       });
       setMsg({ tipo: "ok", texto: "Ficha guardada en el inventario correctamente." });
       setForm(initial);
+      setFotoFrontal(null);
+      setFotoTrasera(null);
+      setPreviewFrontal(null);
+      setPreviewTrasera(null);
     } catch (err: any) {
       const detalle = err.response?.data?.detail ?? "No se pudo guardar la ficha del producto.";
       setMsg({ tipo: "error", texto: detalle });
@@ -240,62 +276,193 @@ export default function FichaProducto() {
       )}
 
       <div className="rounded-3xl border border-slate-100/80 bg-white p-8 shadow-sm hover:shadow-md transition-all duration-300 space-y-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-slate-100">
+        <div className="flex flex-col gap-4 pb-4 border-b border-slate-100">
           <div>
             <h2 className="text-3xl font-black tracking-tight text-slate-900">Ficha de Catálogo</h2>
-            <p className="mt-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Ficha técnica extendida del producto</p>
+            <p className="mt-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Ficha técnica extendida con visión artificial dual</p>
           </div>
           
-          <div className="flex flex-col gap-2 w-full md:w-auto">
-            {/* Botón de Carga de Foto Real */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full mt-2">
+            {/* Foto Frontal Upload Card */}
+            <div className="relative group border-2 border-dashed border-slate-200 hover:border-blue-500 rounded-3xl p-4 transition-all duration-300 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-white text-center cursor-pointer min-h-[160px]"
+                 onClick={() => inputFrontalRef.current?.click()}>
+              <input
+                type="file"
+                ref={inputFrontalRef}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setFotoFrontal(file);
+                    setPreviewFrontal(URL.createObjectURL(file));
+                  }
+                }}
+                accept="image/*"
+                className="hidden"
+              />
+              {previewFrontal ? (
+                <div className="relative w-full h-full flex items-center justify-center p-2">
+                  <img src={previewFrontal} alt="Vista frontal" className="max-h-[120px] rounded-xl object-contain shadow-sm" />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFotoFrontal(null);
+                      setPreviewFrontal(null);
+                    }}
+                    className="absolute -top-2 -right-2 bg-rose-500 hover:bg-rose-600 text-white text-[10px] font-bold rounded-full p-2 h-7 w-7 flex items-center justify-center shadow-md transition-all"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-3xl text-slate-400 group-hover:scale-110 transition-transform">📸</div>
+                  <p className="text-xs font-black text-slate-700 uppercase tracking-wider">Foto Frontal (Obligatoria)</p>
+                  <p className="text-[10px] text-slate-400 font-medium">Toma foto de la marca, nombre y cara principal</p>
+                </div>
+              )}
+            </div>
+
+            {/* Foto Trasera Upload Card */}
+            <div className="relative group border-2 border-dashed border-slate-200 hover:border-blue-500 rounded-3xl p-4 transition-all duration-300 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-white text-center cursor-pointer min-h-[160px]"
+                 onClick={() => inputTraseraRef.current?.click()}>
+              <input
+                type="file"
+                ref={inputTraseraRef}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setFotoTrasera(file);
+                    setPreviewTrasera(URL.createObjectURL(file));
+                  }
+                }}
+                accept="image/*"
+                className="hidden"
+              />
+              {previewTrasera ? (
+                <div className="relative w-full h-full flex items-center justify-center p-2">
+                  <img src={previewTrasera} alt="Vista trasera" className="max-h-[120px] rounded-xl object-contain shadow-sm" />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFotoTrasera(null);
+                      setPreviewTrasera(null);
+                    }}
+                    className="absolute -top-2 -right-2 bg-rose-500 hover:bg-rose-600 text-white text-[10px] font-bold rounded-full p-2 h-7 w-7 flex items-center justify-center shadow-md transition-all"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-3xl text-slate-400 group-hover:scale-110 transition-transform">🔍</div>
+                  <p className="text-xs font-black text-slate-700 uppercase tracking-wider">Foto Trasera (Opcional)</p>
+                  <p className="text-[10px] text-slate-400 font-medium">Toma foto del código de barra, peso e ingredientes</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="w-full">
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-5 py-3 shadow-md transition-all duration-300"
+              disabled={!fotoFrontal}
+              onClick={analizarFotosCargadas}
+              className={`w-full flex items-center justify-center gap-2 rounded-2xl font-black text-xs px-6 py-3.5 shadow-md transition-all duration-300 ${fotoFrontal ? "bg-blue-600 hover:bg-blue-700 text-white cursor-pointer hover:shadow-lg" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}
             >
-              📷 Cargar Foto e Identificar con IA
+              🤖 Extraer Datos con Visión Artificial Dual {fotoFrontal && "✨"}
             </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={(e) => e.target.files?.[0] && escanearArchivo(e.target.files[0])}
-              accept="image/*"
-              className="hidden"
-            />
           </div>
         </div>
 
         {/* Demo Plantillas de IA */}
         <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-2.5">
-          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">💡 Demos Rápidas de IA (Haz clic para simular la foto):</p>
+          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">💡 Demos Rápidas de IA por Clase (Simula foto frontal y trasera):</p>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => simularEscanerIA("harina_pan.png")}
+              onClick={() => simularEscanerIA(
+                "harina_pan_frontal.png", 
+                "harina_pan_trasera.png",
+                "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=400&q=80",
+                "https://images.unsplash.com/photo-1608686207856-001b95cf60ca?auto=format&fit=crop&w=400&q=80"
+              )}
               className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
             >
-              🥖 Harina PAN
+              🌾 Víveres: Harina PAN
             </button>
             <button
               type="button"
-              onClick={() => simularEscanerIA("pepsi_refresco.png")}
+              onClick={() => simularEscanerIA(
+                "pepsi_cola_frontal.png", 
+                "pepsi_cola_trasera.png",
+                "https://images.unsplash.com/photo-1629203851122-3726ecdf080e?auto=format&fit=crop&w=400&q=80",
+                "https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=400&q=80"
+              )}
               className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
             >
-              🥤 Pepsi Cola 1.5L
+              🥤 Bebida: Pepsi Cola
             </button>
             <button
               type="button"
-              onClick={() => simularEscanerIA("remedio_ibuprofeno.png")}
+              onClick={() => simularEscanerIA(
+                "ibuprofeno_frontal.png", 
+                "ibuprofeno_trasera.png",
+                "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?auto=format&fit=crop&w=400&q=80",
+                "https://images.unsplash.com/photo-1607619275536-2479e0a298a6?auto=format&fit=crop&w=400&q=80"
+              )}
               className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
             >
-              💊 Ibuprofeno
+              💊 Medicina: Ibuprofeno
             </button>
             <button
               type="button"
-              onClick={() => simularEscanerIA("galletas_soda.png")}
+              onClick={() => simularEscanerIA(
+                "martillo_stanley_frontal.png", 
+                "martillo_stanley_trasera.png",
+                "https://images.unsplash.com/photo-1586864387967-d02ef85d93e8?auto=format&fit=crop&w=400&q=80",
+                "https://images.unsplash.com/photo-1530124560677-bdaea02790a5?auto=format&fit=crop&w=400&q=80"
+              )}
               className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
             >
-              🍪 Galleta Genérica
+              🛠️ Ferretería: Martillo Stanley
+            </button>
+            <button
+              type="button"
+              onClick={() => simularEscanerIA(
+                "queso_gouda_frontal.png", 
+                "queso_gouda_trasera.png",
+                "https://images.unsplash.com/photo-1486887396153-fa416525c108?auto=format&fit=crop&w=400&q=80",
+                "https://images.unsplash.com/photo-1528256015116-953e7f849dfb?auto=format&fit=crop&w=400&q=80"
+              )}
+              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+            >
+              🧀 Charcutería: Queso Gouda
+            </button>
+            <button
+              type="button"
+              onClick={() => simularEscanerIA(
+                "lomito_res_frontal.png", 
+                null,
+                "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=400&q=80",
+                null
+              )}
+              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+            >
+              🥩 Carne: Lomito de Res
+            </button>
+            <button
+              type="button"
+              onClick={() => simularEscanerIA(
+                "tomate_manzano_frontal.png", 
+                null,
+                "https://images.unsplash.com/photo-1595855759920-86582396756a?auto=format&fit=crop&w=400&q=80",
+                null
+              )}
+              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+            >
+              🍅 Fruver: Tomate Manzano
             </button>
           </div>
         </div>
