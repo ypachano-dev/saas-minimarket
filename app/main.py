@@ -2,7 +2,7 @@ import datetime
 import os
 from decimal import Decimal
 from app.core.security import generar_hash_password, verificar_password, crear_access_token, get_current_user, verificar_rol
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy import func, and_
@@ -1772,9 +1772,7 @@ def listar_usuarios(
 # 26. Analizar Foto de Producto con IA (Soporta una o dos fotos - frontal y trasera)
 @app.post("/api/v1/productos/analizar-foto", tags=["Productos"])
 async def analizar_foto_producto(
-    file: Optional[UploadFile] = File(None),
-    foto_frontal: Optional[UploadFile] = File(None),
-    foto_trasera: Optional[UploadFile] = File(None),
+    request: Request,
     usuario_actual: TokenData = Depends(get_current_user)
 ):
     import base64
@@ -1782,6 +1780,17 @@ async def analizar_foto_producto(
     import json
     import os
     import random
+    
+    # Leer campos multipart form manualmente para evitar errores 422 de validación de FastAPI
+    form_data = await request.form()
+    file_val = form_data.get("file")
+    frontal_val = form_data.get("foto_frontal")
+    trasera_val = form_data.get("foto_trasera")
+    
+    # Extraer sólo si tienen nombre de archivo válido
+    file = file_val if (file_val and getattr(file_val, "filename", None)) else None
+    foto_frontal = frontal_val if (frontal_val and getattr(frontal_val, "filename", None)) else None
+    foto_trasera = trasera_val if (trasera_val and getattr(trasera_val, "filename", None)) else None
     
     # Determinar qué archivo usar como frontal
     frontal = foto_frontal or file
@@ -1987,6 +1996,30 @@ Asegúrate de responder únicamente con el bloque JSON. No agregues introduccion
             "aplica_iva": False,
             "caracteristicas": "Analgésico y antiinflamatorio para aliviar dolores de cabeza, musculares y fiebre. Caja de 10 tabletas.",
             "foto_url": "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?auto=format&fit=crop&w=400&q=80"
+        }
+    elif "chicco" in archivo_str or "locion" in archivo_str or "lotion" in archivo_str or "baby" in archivo_str:
+        return {
+            "codigo_interno": "CUI-102",
+            "codigo_barras": "7591061640135",
+            "nombre": "Loción Chicco Baby Skin 200ml",
+            "marca": "Chicco",
+            "linea": "Cuidado Personal",
+            "clase_o_tipo": "Lociones para Bebés",
+            "tipo_envase": "Botella",
+            "peso": 0.200,
+            "ubicacion": "Pasillo 4 - Anaquel C",
+            "tipo_venta": "unidad",
+            "refrigerado": False,
+            "perecedero": True,
+            "fecha_elaboracion": str(datetime.date.today() - datetime.timedelta(days=60)),
+            "fecha_vencimiento": str(datetime.date.today() + datetime.timedelta(days=365 * 2)),
+            "costo_usd": 3.50,
+            "precio_1_detalle": 4.95,
+            "precio_2_mayorista": 4.50,
+            "precio_3_especial": 4.20,
+            "aplica_iva": True,
+            "caracteristicas": "Loción libre de parabenos especialmente formulada con aceite de almendras, vitamina E y óxido de zinc. Hipoalergénico y probado dermatológicamente.",
+            "foto_url": "https://images.unsplash.com/photo-1515003197210-e0cd71810b5f?auto=format&fit=crop&w=400&q=80"
         }
     elif "queso" in archivo_str or "jamon" in archivo_str or "charcuteria" in archivo_str or "mortadela" in archivo_str:
         return {
