@@ -1,6 +1,10 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import apiClient from "../api/client";
 import ModuloDesposte from "./ModuloDesposte";
+import { normalizeDept, DEPARTAMENTOS_PESAJE } from "../lib/departamentos";
+
+const labelClsAlta = "text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1";
+const inputClsAlta = "rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500";
 
 interface ProductoBalanza {
   id: number;
@@ -29,21 +33,20 @@ interface TicketResponseData {
   created_at: string;
 }
 
-const DEPARTAMENTOS = [
-  { key: "Carnicería", label: "🥩 Carnicería", roleRequired: "carnicero" },
-  { key: "Verdulería", label: "🍅 Verdulería y Frutas", roleRequired: "verdulero" },
-  { key: "Charcutería", label: "🧀 Charcutería", roleRequired: "charcutero" },
-];
-
-// Helper to normalize lines and match them
-const normalizeDept = (linea: string | null | undefined): string => {
-  if (!linea) return "";
-  const norm = linea.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  if (norm.includes("carniceria")) return "carniceria";
-  if (norm.includes("verduleria")) return "verduleria";
-  if (norm.includes("charcuteria")) return "charcuteria";
-  return norm;
+// Las claves deben ser idénticas a DEPARTAMENTOS_PESAJE (lib/departamentos.ts): es lo mismo
+// que usa ModalSolicitudDesposte.tsx (Caja) para etiquetar a qué departamento va la solicitud.
+// Antes esta lista vivía duplicada aquí con "Verdulería" en vez de "Verdulería y Frutas",
+// así que una solicitud de Caja para ese depto nunca calzaba con ningún deptActivo posible.
+const ROL_POR_DEPARTAMENTO: Record<string, string> = {
+  "Carnicería": "carnicero",
+  "Verdulería y Frutas": "verdulero",
+  "Charcutería": "charcutero",
 };
+const DEPARTAMENTOS = DEPARTAMENTOS_PESAJE.map((d) => ({
+  key: d.key,
+  label: d.label,
+  roleRequired: ROL_POR_DEPARTAMENTO[d.key],
+}));
 
 // Decodifica el claim "rol" del JWT sin librerías externas
 function getRolFromToken(): string | null {
@@ -98,6 +101,46 @@ export default function ModuloBalanza() {
 
   // Desposte (descomponer un producto entero en sus cortes resultantes)
   const [mostrarDesposte, setMostrarDesposte] = useState(false);
+  // Solicitudes de desposte creadas por Caja, pendientes de que Balanza las ejecute
+  const [solicitudesPendientes, setSolicitudesPendientes] = useState<any[]>([]);
+  const [solicitudEnEjecucion, setSolicitudEnEjecucion] = useState<any | null>(null);
+
+  // Alta rápida de producto directamente desde Balanza (linea/tipo_venta fijados al depto activo,
+  // a prueba de typos por construcción, en vez de tener que ir a Ingreso de Datos)
+  const [mostrarAltaRapida, setMostrarAltaRapida] = useState(false);
+  const [altaRapidaForm, setAltaRapidaForm] = useState({ nombre: "", codigo_interno: "", costo_usd: "", precio_1_detalle: "", peso: "" });
+  const [guardandoAltaRapida, setGuardandoAltaRapida] = useState(false);
+  const [altaRapidaError, setAltaRapidaError] = useState("");
+
+  async function crearProductoRapido() {
+    setAltaRapidaError("");
+    if (!altaRapidaForm.nombre.trim() || !altaRapidaForm.codigo_interno.trim()) {
+      setAltaRapidaError("Nombre y código interno son obligatorios.");
+      return;
+    }
+    setGuardandoAltaRapida(true);
+    try {
+      await apiClient.post("/api/v1/productos", {
+        codigo_interno: altaRapidaForm.codigo_interno.trim(),
+        nombre: altaRapidaForm.nombre.trim(),
+        linea: deptActivo,
+        tipo_venta: "peso",
+        costo_usd: altaRapidaForm.costo_usd || "0",
+        precio_1_detalle: altaRapidaForm.precio_1_detalle || "0",
+        peso: altaRapidaForm.peso || null,
+      });
+      setMostrarAltaRapida(false);
+      setAltaRapidaForm({ nombre: "", codigo_interno: "", costo_usd: "", precio_1_detalle: "", peso: "" });
+      setLoadingProds(true);
+      const res = await apiClient.get<ProductoBalanza[]>("/api/v1/productos");
+      setMasterProductos(res.data);
+      setLoadingProds(false);
+    } catch (err: any) {
+      setAltaRapidaError(err.response?.data?.detail ?? "No se pudo crear el producto.");
+    } finally {
+      setGuardandoAltaRapida(false);
+    }
+  }
 
   // Survey states
   const [surveyTicket, setSurveyTicket] = useState<any | null>(null);
@@ -154,7 +197,7 @@ export default function ModuloBalanza() {
     if (rol === "carnicero") {
       setDeptActivo("Carnicería");
     } else if (rol === "verdulero") {
-      setDeptActivo("Verdulería");
+      setDeptActivo("Verdulería y Frutas");
     } else if (rol === "charcutero") {
       setDeptActivo("Charcutería");
     } else {
@@ -174,6 +217,41 @@ export default function ModuloBalanza() {
     setProductoSel(null);
     setPesoInput("0.000");
   }, [deptActivo]);
+
+  // Cola de solicitudes de desposte pendientes, creadas por Caja para el departamento activo
+  const cargarSolicitudesPendientes = useCallback(() => {
+    apiClient.get("/api/v1/desposte-solicitudes", { params: { departamento: deptActivo, estatus: "pendiente" } })
+      .then((res) => setSolicitudesPendientes(res.data))
+      .catch(() => setSolicitudesPendientes([]));
+  }, [deptActivo]);
+
+  useEffect(() => {
+    cargarSolicitudesPendientes();
+    const t = setInterval(cargarSolicitudesPendientes, 15000);
+    return () => clearInterval(t);
+  }, [cargarSolicitudesPendientes]);
+
+  // Historial de lo ya ejecutado/verificado/cancelado por este departamento (auditoría de Balanza)
+  const [mostrarHistorialBalanza, setMostrarHistorialBalanza] = useState(false);
+  const [historialBalanza, setHistorialBalanza] = useState<any[]>([]);
+  const cargarHistorialBalanza = useCallback(() => {
+    Promise.all([
+      apiClient.get("/api/v1/desposte-solicitudes", { params: { departamento: deptActivo, estatus: "completado" } }),
+      apiClient.get("/api/v1/desposte-solicitudes", { params: { departamento: deptActivo, estatus: "verificado" } }),
+      apiClient.get("/api/v1/desposte-solicitudes", { params: { departamento: deptActivo, estatus: "cancelado" } }),
+    ])
+      .then(([completadas, verificadas, canceladas]) => {
+        const todas = [...completadas.data, ...verificadas.data, ...canceladas.data].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+        setHistorialBalanza(todas);
+      })
+      .catch(() => setHistorialBalanza([]));
+  }, [deptActivo]);
+
+  useEffect(() => {
+    if (mostrarHistorialBalanza) cargarHistorialBalanza();
+  }, [deptActivo, mostrarHistorialBalanza, cargarHistorialBalanza]);
 
   // Check Cédula
   async function buscarCliente() {
@@ -797,13 +875,79 @@ export default function ModuloBalanza() {
                 )}
                 <button
                   type="button"
-                  onClick={() => setMostrarDesposte(true)}
+                  onClick={() => setMostrarHistorialBalanza((v) => !v)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5"
+                >
+                  🧾 {mostrarHistorialBalanza ? "Ocultar historial" : "Historial de desposte"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setSolicitudEnEjecucion(null); setMostrarDesposte(true); }}
                   className="bg-violet-50 hover:bg-violet-600 text-violet-700 hover:text-white border border-violet-100 hover:border-violet-600 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5"
                 >
                   🥩 Desposte
                 </button>
               </div>
             </div>
+
+            {/* Cola de pendientes: siempre visible (sin toggle) para que nunca "desaparezca" de Balanza */}
+            <div className="bg-amber-50/60 border border-amber-100 rounded-2xl p-3 space-y-2">
+              <p className="text-[10px] font-black uppercase text-amber-700 tracking-wider px-0.5">
+                🔔 Solicitudes de Desposte Pendientes — {DEPARTAMENTOS.find((d) => d.key === deptActivo)?.label ?? deptActivo} ({solicitudesPendientes.length})
+              </p>
+              {solicitudesPendientes.length === 0 && (
+                <p className="text-xs text-slate-400 text-center py-3">Sin solicitudes pendientes para este departamento.</p>
+              )}
+              {solicitudesPendientes.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-3 bg-white rounded-xl border border-amber-100 px-3.5 py-2.5">
+                  <div>
+                    <p className="text-xs font-bold text-slate-800">{s.producto_origen_nombre} — {Number(s.cantidad_estimada).toFixed(3)} kg estimados</p>
+                    <p className="text-[10px] text-slate-400">
+                      Solicitado por {s.solicitado_por_nombre ?? "—"} el {new Date(s.created_at).toLocaleString("es-VE")}
+                      {s.comentario_solicitud ? ` — "${s.comentario_solicitud}"` : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setSolicitudEnEjecucion(s); setMostrarDesposte(true); }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-all whitespace-nowrap"
+                  >
+                    Ejecutar
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {mostrarHistorialBalanza && (
+              <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-hidden animate-fade-in">
+                <div className="p-3 bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-500">
+                  Historial — {DEPARTAMENTOS.find((d) => d.key === deptActivo)?.label ?? deptActivo}
+                </div>
+                <div className="divide-y divide-slate-50 max-h-72 overflow-y-auto">
+                  {historialBalanza.length === 0 && <p className="text-xs text-slate-400 text-center py-6">Sin movimientos en el historial todavía.</p>}
+                  {historialBalanza.map((s) => (
+                    <div key={s.id} className="flex items-center justify-between px-4 py-2.5 text-xs">
+                      <div>
+                        <span className="font-bold text-slate-800">{s.producto_origen_nombre}</span>
+                        <span className="text-slate-400"> · {new Date(s.created_at).toLocaleDateString("es-VE")}</span>
+                        {s.estatus !== "cancelado" && (
+                          <p className="text-[10px] text-slate-400">
+                            Ejecutado por {s.ejecutado_por_nombre ?? "—"}
+                            {s.estatus === "verificado" ? ` · verificado por ${s.verificado_por_nombre ?? "Caja"}` : ""}
+                          </p>
+                        )}
+                        {s.estatus === "cancelado" && s.cancelado_motivo && <p className="text-[10px] text-slate-400">Motivo: {s.cancelado_motivo}</p>}
+                      </div>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase whitespace-nowrap ${
+                        s.estatus === "verificado" ? "bg-emerald-100 text-emerald-700" : s.estatus === "completado" ? "bg-blue-100 text-blue-700" : "bg-slate-200 text-slate-600"
+                      }`}>
+                        {s.estatus}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               {DEPARTAMENTOS.map((dept) => {
@@ -889,9 +1033,18 @@ export default function ModuloBalanza() {
                   <h3 className="text-lg font-bold text-slate-900">📦 Catálogo del Departamento</h3>
                   <p className="text-xs text-slate-400 mt-0.5">Seleccione el producto pesado en la balanza</p>
                 </div>
-                <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full">
-                  {productos.length} Productos
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full">
+                    {productos.length} Productos
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMostrarAltaRapida(true)}
+                    className="bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border border-emerald-100 hover:border-emerald-600 text-xs font-bold px-3 py-1 rounded-full transition-all"
+                  >
+                    + Agregar producto
+                  </button>
+                </div>
               </div>
 
               {errorText && <p className="text-sm font-semibold text-rose-600 bg-rose-50 p-3 rounded-2xl">{errorText}</p>}
@@ -905,8 +1058,15 @@ export default function ModuloBalanza() {
                   <span className="text-4xl">📭</span>
                   <h4 className="font-bold text-slate-700 mt-3">No hay productos cargados</h4>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                    Debe agregar productos con la línea o departamento "{deptActivo}" en el módulo de Ingreso de Datos.
+                    Debe agregar productos con la línea o departamento "{deptActivo}" en el módulo de Ingreso de Datos, o crear uno rápido aquí mismo.
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => setMostrarAltaRapida(true)}
+                    className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all"
+                  >
+                    + Agregar producto a "{deptActivo}"
+                  </button>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1161,13 +1321,88 @@ export default function ModuloBalanza() {
           <div className="w-full max-w-6xl bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 relative my-8">
             <button
               type="button"
-              onClick={() => setMostrarDesposte(false)}
+              onClick={() => { setMostrarDesposte(false); setSolicitudEnEjecucion(null); }}
               className="absolute top-4 right-4 z-10 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full w-8 h-8 flex items-center justify-center font-bold transition-all"
               title="Cerrar"
             >
               ✕
             </button>
-            <ModuloDesposte />
+            <ModuloDesposte
+              solicitudId={solicitudEnEjecucion?.id}
+              productoOrigenIdPrellenado={solicitudEnEjecucion?.producto_origen_id}
+              cantidadEstimadaPrellenada={solicitudEnEjecucion ? Number(solicitudEnEjecucion.cantidad_estimada) : undefined}
+              onEjecutado={() => {
+                setMostrarDesposte(false);
+                setSolicitudEnEjecucion(null);
+                cargarSolicitudesPendientes();
+                if (mostrarHistorialBalanza) cargarHistorialBalanza();
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ALTA RÁPIDA DE PRODUCTO DESDE BALANZA */}
+      {mostrarAltaRapida && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 relative">
+            <button
+              type="button"
+              onClick={() => setMostrarAltaRapida(false)}
+              className="absolute top-4 right-4 z-10 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full w-8 h-8 flex items-center justify-center font-bold transition-all"
+              title="Cerrar"
+            >
+              ✕
+            </button>
+            <h3 className="text-lg font-bold text-slate-900">+ Agregar producto</h3>
+            <p className="text-xs text-slate-400 mt-0.5 mb-4">
+              Se creará con línea "<span className="font-bold">{deptActivo}</span>" y tipo de venta "peso" — aparecerá de inmediato en este catálogo.
+            </p>
+            <div className="space-y-3">
+              <label className="flex flex-col">
+                <span className={labelClsAlta}>Nombre</span>
+                <input
+                  className={inputClsAlta}
+                  value={altaRapidaForm.nombre}
+                  onChange={(e) => setAltaRapidaForm((p) => ({ ...p, nombre: e.target.value }))}
+                  placeholder="Ej: Pollo Entero"
+                />
+              </label>
+              <label className="flex flex-col">
+                <span className={labelClsAlta}>Código interno</span>
+                <input
+                  className={inputClsAlta}
+                  value={altaRapidaForm.codigo_interno}
+                  onChange={(e) => setAltaRapidaForm((p) => ({ ...p, codigo_interno: e.target.value }))}
+                  placeholder="Ej: C003"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col">
+                  <span className={labelClsAlta}>Costo USD/Kg</span>
+                  <input type="number" step="0.01" className={inputClsAlta} value={altaRapidaForm.costo_usd} onChange={(e) => setAltaRapidaForm((p) => ({ ...p, costo_usd: e.target.value }))} placeholder="0.00" />
+                </label>
+                <label className="flex flex-col">
+                  <span className={labelClsAlta}>Precio 1 USD/Kg</span>
+                  <input type="number" step="0.01" className={inputClsAlta} value={altaRapidaForm.precio_1_detalle} onChange={(e) => setAltaRapidaForm((p) => ({ ...p, precio_1_detalle: e.target.value }))} placeholder="0.00" />
+                </label>
+              </div>
+              <label className="flex flex-col">
+                <span className={labelClsAlta}>Peso de referencia (Kg, opcional)</span>
+                <input type="number" step="0.001" className={inputClsAlta} value={altaRapidaForm.peso} onChange={(e) => setAltaRapidaForm((p) => ({ ...p, peso: e.target.value }))} placeholder="0.000" />
+              </label>
+
+              {altaRapidaError && <p className="text-xs font-semibold text-rose-600 bg-rose-50 p-2.5 rounded-xl">{altaRapidaError}</p>}
+
+              <button
+                type="button"
+                disabled={guardandoAltaRapida}
+                onClick={crearProductoRapido}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-sm py-2.5 rounded-xl transition-all"
+              >
+                {guardandoAltaRapida ? "Guardando..." : "Crear producto"}
+              </button>
+            </div>
           </div>
         </div>
       )}

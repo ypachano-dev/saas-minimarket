@@ -39,10 +39,11 @@ class RutaActividad(Base):
     
     ejecutada: Mapped[bool] = mapped_column(Boolean, default=False)
     comentarios_avance: Mapped[str | None] = mapped_column(Text, nullable=True)
-    
+
     foto_soporte_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     factura_soporte_monto: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    
+
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    actualizado_en: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     
     ruta: Mapped[RutaVendedor] = relationship("RutaVendedor", back_populates="actividades")

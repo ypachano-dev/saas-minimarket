@@ -21,12 +21,13 @@ from app.models.pedido_delivery import PedidoDelivery
 from app.models.orden_compra import OrdenCompra, OrdenCompraItem
 from app.models.tesoreria import CuentaTesoreria, MovimientoTesoreria
 from app.models.cartera import CuentaPorCobrar, CuentaPorPagar
-from app.models.desposte import Desposte, DesposteItem
+from app.models.desposte import Desposte, DesposteItem, DesposteSolicitud
 from app.models.recepcion import RecepcionMercancia, RecepcionMercanciaItem
 from app.models.auditoria import AuditoriaInventario, AuditoriaInventarioItem
 from app.models.visita import VisitaCliente, EncuestaMarketing
 from app.models.orden_venta import OrdenVenta, OrdenVentaItem
 from app.models.ruta import RutaVendedor, RutaActividad
+from app.models.renglon_gasto import RenglonGasto, PagoRenglon
 
 def crear_estructura_SaaS():
     print("Conectando con base de datos e iniciando creacion de tablas...")

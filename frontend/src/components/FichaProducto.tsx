@@ -1,7 +1,7 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useRef, useState, useEffect, type FormEvent, type KeyboardEvent } from "react";
 import apiClient from "../api/client";
+import { DEPARTAMENTOS_PESAJE } from "../lib/departamentos";
 
-const PROVEEDORES = ["Distribuidora Polar", "Alimentos Mary", "Vatel C.A.", "Cargill Venezuela", "Proveedor Local / Otro"];
 const PRESENTACIONES = ["Unidad", "Empaque", "Bulto", "Botella", "Frasco", "Pote", "Lata", "Caja", "Bolsa", "Blíster", "Granel"];
 
 const initial = {
@@ -21,6 +21,7 @@ const initial = {
   tipo_venta: "unidad",
   factor_merma: "",
   refrigerado: false,
+  temperatura_conservacion: "ambiente",
   perecedero: false,
   // Fechas críticas
   fecha_elaboracion: "",
@@ -41,6 +42,23 @@ const inputCls = "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-
 const labelCls = "text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1";
 const seccionCls = "text-xs font-black uppercase tracking-wider text-slate-900";
 
+function MarkupPersonalizado({ valor, onChange, onAplicar }: { valor: string; onChange: (v: string) => void; onAplicar: () => void }) {
+  return (
+    <div className="flex gap-1 mt-1">
+      <input
+        type="number"
+        step="0.1"
+        value={valor}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onAplicar(); } }}
+        placeholder="%"
+        className="w-14 text-[10px] font-bold bg-white border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      />
+      <button type="button" onClick={onAplicar} className="text-[10px] font-bold bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white px-1.5 py-0.5 rounded transition-colors">Aplicar %</button>
+    </div>
+  );
+}
+
 function MsgLine({ msg }: { msg: { tipo: "ok" | "error"; texto: string } | null }) {
   if (!msg) return null;
   return (
@@ -50,11 +68,36 @@ function MsgLine({ msg }: { msg: { tipo: "ok" | "error"; texto: string } | null 
   );
 }
 
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = (error) => reject(error);
+  });
+}
+
 export default function FichaProducto() {
   const [form, setForm] = useState(initial);
+  const [dbProveedores, setDbProveedores] = useState<{ id: number; nombre: string }[]>([]);
+  const [esProveedorOtro, setEsProveedorOtro] = useState(false);
+  const [nuevoProveedorTxt, setNuevoProveedorTxt] = useState("");
+  
+  const inputProductoRef = useRef<HTMLInputElement>(null);
+  
+  const [guardadosRecientes, setGuardadosRecientes] = useState<any[]>([]);
+
+  useEffect(() => {
+    apiClient.get("/api/v1/proveedores")
+      .then((res) => {
+        setDbProveedores(res.data);
+      })
+      .catch(() => {});
+  }, []);
   const [msg, setMsg] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   const [escaneando, setEscaneando] = useState(false);
   const [pasoIA, setPasoIA] = useState("");
+  const [customPct, setCustomPct] = useState<Record<string, string>>({});
   
   const [fotoFrontal, setFotoFrontal] = useState<File | null>(null);
   const [fotoTrasera, setFotoTrasera] = useState<File | null>(null);
@@ -74,6 +117,32 @@ export default function FichaProducto() {
       e.preventDefault();
       nombreRef.current?.focus();
     }
+  }
+
+  function handlePriceBlur(key: "precio_1_detalle" | "precio_2_mayorista" | "precio_3_especial") {
+    const raw = form[key].trim();
+    if (!raw) return;
+    const costo = Number(form.costo_usd) || 0;
+    
+    if (raw.includes("%")) {
+      const percentStr = raw.replace(/[+%]/g, "");
+      const percent = Number(percentStr);
+      if (!Number.isNaN(percent)) {
+        const calculated = costo * (1 + percent / 100);
+        set(key, calculated.toFixed(2));
+      }
+    } else {
+      const num = Number(raw);
+      if (!Number.isNaN(num)) {
+        set(key, num.toFixed(2));
+      }
+    }
+  }
+
+  function applyQuickMarkup(key: "precio_1_detalle" | "precio_2_mayorista" | "precio_3_especial", percent: number) {
+    const costo = Number(form.costo_usd) || 0;
+    const calculated = costo * (1 + percent / 100);
+    set(key, calculated.toFixed(2));
   }
 
   // Comprimir y redimensionar imagen para optimizar ancho de banda en tabletas y límites de APIs (max 1MB)
@@ -191,6 +260,7 @@ export default function FichaProducto() {
         tipo_venta: data.tipo_venta || "unidad",
         factor_merma: String(data.factor_merma ?? ""),
         refrigerado: !!data.refrigerado,
+        temperatura_conservacion: data.temperatura_conservacion || (data.refrigerado ? "refrigerado" : "ambiente"),
         perecedero: !!data.perecedero,
         fecha_elaboracion: data.fecha_elaboracion || "",
         fecha_ingreso_stock: data.fecha_ingreso_stock || "",
@@ -252,17 +322,11 @@ export default function FichaProducto() {
     const precio1 = Number(form.precio_1_detalle || 0);
     const precio2 = Number(form.precio_2_mayorista || 0);
     const precio3 = Number(form.precio_3_especial || 0);
-    const peso = Number(form.peso || 0);
+    const peso = form.peso.trim() !== "" ? Number(form.peso) : null;
     const stockMinimo = Number(form.stock_minimo || 0);
 
-    if ([costo, precio1, precio2, precio3, peso, stockMinimo].some((n) => Number.isNaN(n) || n < 0)) {
-      setMsg({ tipo: "error", texto: "Peso, Costo, Precios y Stock Mínimo deben ser números válidos (≥ 0)." });
-      return;
-    }
-
-    const factorMerma = Number(form.factor_merma || 0);
-    if (form.tipo_venta === "peso" && (Number.isNaN(factorMerma) || factorMerma < 0 || factorMerma > 100)) {
-      setMsg({ tipo: "error", texto: "El % de Merma / Factor de Desposte debe ser un número entre 0 y 100." });
+    if ([costo, precio1, precio2, precio3, stockMinimo].some((n) => Number.isNaN(n) || n < 0) || (peso !== null && (Number.isNaN(peso) || peso < 0))) {
+      setMsg({ tipo: "error", texto: "Costo, Precios, Peso y Stock Mínimo deben ser números válidos (≥ 0)." });
       return;
     }
 
@@ -277,7 +341,8 @@ export default function FichaProducto() {
         clase_o_tipo: form.clase_o_tipo.trim() || null,
         tipo_envase: form.tipo_envase || null,
         ubicacion: form.ubicacion.trim() || null,
-        refrigerado: form.refrigerado,
+        refrigerado: form.temperatura_conservacion !== "ambiente",
+        temperatura_conservacion: form.temperatura_conservacion,
         perecedero: form.perecedero,
         fecha_elaboracion: form.fecha_elaboracion || null,
         fecha_ingreso_stock: form.fecha_ingreso_stock || null,
@@ -292,14 +357,28 @@ export default function FichaProducto() {
         peso,
         foto_url: form.foto_url.trim() || null,
         tipo_venta: form.tipo_venta,
-        factor_merma: form.tipo_venta === "peso" ? factorMerma : null,
+        factor_merma: null,
       });
+
+      const nuevoGuardado = {
+        codigo_interno: form.codigo_interno.trim(),
+        codigo_barras: form.codigo_barras.trim() || null,
+        nombre: form.nombre.trim(),
+        linea: form.linea.trim() || null,
+        precio_1_detalle: precio1,
+        peso: peso,
+        foto_url: form.foto_url.trim() || null,
+      };
+      setGuardadosRecientes((prev) => [nuevoGuardado, ...prev]);
+
       setMsg({ tipo: "ok", texto: "Ficha guardada en el inventario correctamente." });
       setForm(initial);
       setFotoFrontal(null);
       setFotoTrasera(null);
       setPreviewFrontal(null);
       setPreviewTrasera(null);
+      setEsProveedorOtro(false);
+      setNuevoProveedorTxt("");
     } catch (err: any) {
       const detalle = err.response?.data?.detail ?? "No se pudo guardar la ficha del producto.";
       setMsg({ tipo: "error", texto: detalle });
@@ -571,6 +650,19 @@ export default function FichaProducto() {
               <label className="flex flex-col">
                 <span className={labelCls}>Línea de Negocio (Crítica)</span>
                 <input className={inputCls} value={form.linea} onChange={(e) => set("linea", e.target.value)} placeholder="Ej: Víveres, Carnicería, Charcutería..." />
+                <div className="flex gap-1.5 mt-1.5">
+                  {DEPARTAMENTOS_PESAJE.map((d) => (
+                    <button
+                      key={d.key}
+                      type="button"
+                      onClick={() => set("linea", d.key)}
+                      title="Si este producto se pesará en Balanza Digital, usa exactamente este valor para evitar errores de coincidencia."
+                      className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full transition-colors"
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Tipo / Categoría</span>
@@ -589,12 +681,39 @@ export default function FichaProducto() {
             <div className="mt-3 grid grid-cols-2 gap-4">
               <label className="flex flex-col">
                 <span className={labelCls}>Proveedor</span>
-                <select className={inputCls} value={form.proveedor} onChange={(e) => set("proveedor", e.target.value)}>
+                <select
+                  className={inputCls}
+                  value={esProveedorOtro ? "OTRO" : form.proveedor}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "OTRO") {
+                      setEsProveedorOtro(true);
+                      set("proveedor", "");
+                    } else {
+                      setEsProveedorOtro(false);
+                      set("proveedor", val);
+                    }
+                  }}
+                >
                   <option value="">Seleccionar...</option>
-                  {PROVEEDORES.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                  {dbProveedores.map((p) => (
+                    <option key={p.id} value={p.nombre}>{p.nombre}</option>
                   ))}
+                  <option value="OTRO">➕ Agregar otro...</option>
                 </select>
+                {esProveedorOtro && (
+                  <input
+                    type="text"
+                    className={`${inputCls} mt-2 bg-blue-50/30 border-blue-200`}
+                    value={nuevoProveedorTxt}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNuevoProveedorTxt(val);
+                      set("proveedor", val);
+                    }}
+                    placeholder="Nombre del nuevo proveedor..."
+                  />
+                )}
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Presentación</span>
@@ -607,7 +726,11 @@ export default function FichaProducto() {
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>
-                  {["Cuidado Personal", "Bebidas", "Limpieza"].includes(form.linea) ? "Volumen / Contenido (ml)" : "Peso exacto (kg)"}
+                  {["Cuidado Personal", "Bebidas", "Limpieza"].includes(form.linea)
+                    ? "Volumen / Contenido (ml)"
+                    : form.tipo_venta === "peso"
+                    ? "Peso Promedio por Pieza (kg) (Opcional)"
+                    : "Peso exacto por Unidad (kg)"}
                 </span>
                 <div className="relative mt-1">
                   <input
@@ -664,30 +787,29 @@ export default function FichaProducto() {
                   </button>
                 </div>
               </label>
-              {form.tipo_venta === "peso" && (
+              <div className="grid grid-cols-2 gap-4 col-span-2 mt-2">
                 <label className="flex flex-col">
-                  <span className={labelCls}>% Merma Estimado / Factor de Desposte</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="100"
+                  <span className={labelCls}>Temperatura de Conservación</span>
+                  <select
                     className={inputCls}
-                    value={form.factor_merma}
-                    onChange={(e) => set("factor_merma", e.target.value)}
-                    placeholder="0.00"
-                  />
+                    value={form.temperatura_conservacion}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      set("temperatura_conservacion", val);
+                      set("refrigerado", val !== "ambiente");
+                    }}
+                  >
+                    <option value="ambiente">Ambient / Fresco</option>
+                    <option value="refrigerado">Refrigeración Estándar (0°C a 4°C)</option>
+                    <option value="congelado">Congelación (&lt;-18°C)</option>
+                  </select>
                 </label>
-              )}
-              <div className="flex gap-6 items-center mt-4 col-span-2">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input type="checkbox" checked={form.refrigerado} onChange={(e) => set("refrigerado", e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 border-slate-300" />
-                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">¿Requiere Refrigeración?</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input type="checkbox" checked={form.perecedero} onChange={(e) => set("perecedero", e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 border-slate-300" />
-                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">¿Es Perecedero?</span>
-                </label>
+                <div className="flex items-center gap-2 select-none pt-6">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={form.perecedero} onChange={(e) => set("perecedero", e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500 h-4.5 w-4.5 border-slate-300" />
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">¿Es Perecedero? (Tiene fecha de vencimiento)</span>
+                  </label>
+                </div>
               </div>
             </div>
           </section>
@@ -719,22 +841,147 @@ export default function FichaProducto() {
                 <span className={labelCls}>Costo USD</span>
                 <input type="number" step="0.01" min="0" className={inputCls} value={form.costo_usd} onChange={(e) => set("costo_usd", e.target.value)} placeholder="0.00" />
               </label>
-              <label className="flex flex-col">
-                <span className={labelCls}>Precio 1 (Detalle)</span>
-                <input type="number" step="0.01" min="0" className={inputCls} value={form.precio_1_detalle} onChange={(e) => set("precio_1_detalle", e.target.value)} placeholder="0.00" />
-              </label>
-              <label className="flex flex-col">
-                <span className={labelCls}>Precio 2 (Mayorista)</span>
-                <input type="number" step="0.01" min="0" className={inputCls} value={form.precio_2_mayorista} onChange={(e) => set("precio_2_mayorista", e.target.value)} placeholder="0.00" />
-              </label>
-              <label className="flex flex-col">
-                <span className={labelCls}>Precio 3 (Especial / VIP)</span>
-                <input type="number" step="0.01" min="0" className={inputCls} value={form.precio_3_especial} onChange={(e) => set("precio_3_especial", e.target.value)} placeholder="0.00" />
-              </label>
-              <label className="flex flex-col col-span-2">
-                <span className={labelCls}>URL Foto del producto</span>
-                <input type="url" className={inputCls} value={form.foto_url} onChange={(e) => set("foto_url", e.target.value)} placeholder="https://..." />
-              </label>
+              <div className="flex flex-col">
+                <label className="flex flex-col">
+                  <span className={labelCls}>Precio 1 (Detalle)</span>
+                  <input
+                    type="text"
+                    className={inputCls}
+                    value={form.precio_1_detalle}
+                    onChange={(e) => set("precio_1_detalle", e.target.value)}
+                    onBlur={() => handlePriceBlur("precio_1_detalle")}
+                    placeholder="0.00 o +30%"
+                  />
+                </label>
+                <div className="flex gap-1 mt-1">
+                  <button type="button" onClick={() => applyQuickMarkup("precio_1_detalle", 20)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition-colors">+20%</button>
+                  <button type="button" onClick={() => applyQuickMarkup("precio_1_detalle", 30)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition-colors">+30%</button>
+                  <button type="button" onClick={() => applyQuickMarkup("precio_1_detalle", 40)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition-colors">+40%</button>
+                </div>
+                <MarkupPersonalizado
+                  valor={customPct.precio_1_detalle ?? ""}
+                  onChange={(v) => setCustomPct((p) => ({ ...p, precio_1_detalle: v }))}
+                  onAplicar={() => applyQuickMarkup("precio_1_detalle", Number(customPct.precio_1_detalle) || 0)}
+                />
+              </div>
+
+              <div className="flex flex-col">
+                <label className="flex flex-col">
+                  <span className={labelCls}>Precio 2 (Mayorista)</span>
+                  <input
+                    type="text"
+                    className={inputCls}
+                    value={form.precio_2_mayorista}
+                    onChange={(e) => set("precio_2_mayorista", e.target.value)}
+                    onBlur={() => handlePriceBlur("precio_2_mayorista")}
+                    placeholder="0.00 o +15%"
+                  />
+                </label>
+                <div className="flex gap-1 mt-1">
+                  <button type="button" onClick={() => applyQuickMarkup("precio_2_mayorista", 10)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition-colors">+10%</button>
+                  <button type="button" onClick={() => applyQuickMarkup("precio_2_mayorista", 15)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition-colors">+15%</button>
+                  <button type="button" onClick={() => applyQuickMarkup("precio_2_mayorista", 20)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition-colors">+20%</button>
+                </div>
+                <MarkupPersonalizado
+                  valor={customPct.precio_2_mayorista ?? ""}
+                  onChange={(v) => setCustomPct((p) => ({ ...p, precio_2_mayorista: v }))}
+                  onAplicar={() => applyQuickMarkup("precio_2_mayorista", Number(customPct.precio_2_mayorista) || 0)}
+                />
+              </div>
+
+              <div className="flex flex-col">
+                <label className="flex flex-col">
+                  <span className={labelCls}>Precio 3 (Especial / VIP)</span>
+                  <input
+                    type="text"
+                    className={inputCls}
+                    value={form.precio_3_especial}
+                    onChange={(e) => set("precio_3_especial", e.target.value)}
+                    onBlur={() => handlePriceBlur("precio_3_especial")}
+                    placeholder="0.00 o +10%"
+                  />
+                </label>
+                <div className="flex gap-1 mt-1">
+                  <button type="button" onClick={() => applyQuickMarkup("precio_3_especial", 5)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition-colors">+5%</button>
+                  <button type="button" onClick={() => applyQuickMarkup("precio_3_especial", 10)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition-colors">+10%</button>
+                  <button type="button" onClick={() => applyQuickMarkup("precio_3_especial", 15)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition-colors">+15%</button>
+                </div>
+                <MarkupPersonalizado
+                  valor={customPct.precio_3_especial ?? ""}
+                  onChange={(v) => setCustomPct((p) => ({ ...p, precio_3_especial: v }))}
+                  onAplicar={() => applyQuickMarkup("precio_3_especial", Number(customPct.precio_3_especial) || 0)}
+                />
+              </div>
+
+              <div className="flex flex-col col-span-3">
+                <span className={labelCls}>Foto del Producto (Ficha Final)</span>
+                <div className="flex flex-col sm:flex-row items-center gap-4 mt-1 bg-slate-50/50 border border-slate-200 rounded-xl p-3">
+                  <div className="w-16 h-16 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
+                    {form.foto_url ? (
+                      <img src={form.foto_url} alt="Foto producto" className="w-full h-full object-contain" />
+                    ) : (
+                      <span className="text-xl">📷</span>
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-1.5 w-full">
+                    <input
+                      type="file"
+                      ref={inputProductoRef}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          try {
+                            const base64 = await fileToBase64(file);
+                            set("foto_url", base64);
+                          } catch (err) {
+                            console.error("Error al leer archivo", err);
+                          }
+                        }
+                      }}
+                      accept="image/*"
+                      className="hidden"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => inputProductoRef.current?.click()}
+                        className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                      >
+                        Cargar / Tomar Foto
+                      </button>
+                      {form.foto_url && (
+                        <button
+                          type="button"
+                          onClick={() => set("foto_url", "")}
+                          className="bg-rose-50 border border-rose-100 hover:bg-rose-100 text-rose-600 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                        >
+                          Eliminar
+                        </button>
+                      )}
+                      {previewFrontal && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (fotoFrontal) {
+                              try {
+                                const base64 = await fileToBase64(fotoFrontal);
+                                set("foto_url", base64);
+                              } catch (err) {
+                                console.error("Error al copiar foto frontal", err);
+                              }
+                            }
+                          }}
+                          className="bg-blue-50 border border-blue-100 hover:bg-blue-100 text-blue-600 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                        >
+                          ✨ Copiar de Foto Frontal
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-medium">Sube un archivo de imagen o toma una foto desde tu dispositivo móvil/tablet.</p>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center mt-6 col-span-3">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input type="checkbox" checked={form.aplica_iva} onChange={(e) => set("aplica_iva", e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 border-slate-300" />
@@ -744,11 +991,47 @@ export default function FichaProducto() {
             </div>
           </section>
 
-          <button type="submit" className="w-full rounded-2xl bg-blue-600 py-3 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:bg-blue-700 hover:shadow-md">
+          <button type="submit" className="w-full rounded-2xl bg-blue-600 py-3 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:bg-blue-700 hover:shadow-md cursor-pointer">
             Guardar Ficha en Inventario
           </button>
         </form>
       </div>
+
+      {/* Cinta de productos guardados recientemente */}
+      {guardadosRecientes.length > 0 && (
+        <div className="mt-8 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-2">
+            <span>📋 Productos Registrados en esta Sesión</span>
+            <span className="bg-blue-100 text-blue-800 text-[10px] px-2 py-0.5 rounded-full font-bold">{guardadosRecientes.length}</span>
+          </h3>
+          <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-200">
+            {guardadosRecientes.map((p, idx) => (
+              <div key={idx} className="flex-none w-48 p-3 rounded-2xl border border-slate-100 bg-slate-50/50 flex flex-col gap-2 hover:shadow-sm transition-all duration-200">
+                <div className="w-full h-24 bg-white rounded-xl overflow-hidden flex items-center justify-center border border-slate-100">
+                  {p.foto_url ? (
+                    <img src={p.foto_url} alt={p.nombre} className="h-full w-full object-contain" />
+                  ) : (
+                    <span className="text-2xl">📦</span>
+                  )}
+                </div>
+                <div className="flex-1 flex flex-col justify-between">
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">{p.linea || "Sin categoría"}</p>
+                    <h4 className="text-xs font-black text-slate-800 truncate" title={p.nombre}>{p.nombre}</h4>
+                    <p className="text-[9px] font-semibold text-slate-400 font-mono">SKU: {p.codigo_interno}</p>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-2">
+                    <span className="text-xs font-black text-blue-600">${Number(p.precio_1_detalle).toFixed(2)}</span>
+                    {p.peso !== null && (
+                      <span className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{p.peso} kg</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import Sidebar, { MODULOS, type ViewKey } from "./components/Sidebar";
 import PlaceholderModulo from "./components/PlaceholderModulo";
 import IngresoDatos from "./components/IngresoDatos";
 import ModuloCRM from "./components/ModuloCRM";
-import FichaProducto from "./components/FichaProducto";
+import CatalogoProductos from "./components/CatalogoProductos";
 import ModuloCaja from "./components/ModuloCaja";
 import ModuloEmpresas from "./components/ModuloEmpresas";
 import Login from "./components/Login";
@@ -86,32 +86,41 @@ export default function App() {
         })
         .catch(() => {});
 
+      const aplicarBranding = (data: any) => {
+        setBranding(data);
+
+        // Inyectar variables de color personalizadas de la empresa
+        const primaryColor = data.color_primario || "#8b5cf6";
+        const secondaryColor = data.color_secundario || "#6366f1";
+
+        document.documentElement.style.setProperty('--color-primary', primaryColor);
+        document.documentElement.style.setProperty('--color-secondary', secondaryColor);
+
+        const primaryRgb = hexToRgb(primaryColor);
+        const secondaryRgb = hexToRgb(secondaryColor);
+        if (primaryRgb) {
+          document.documentElement.style.setProperty('--color-primary-rgb', `${primaryRgb.r}, ${primaryRgb.g}, ${primaryRgb.b}`);
+        }
+        if (secondaryRgb) {
+          document.documentElement.style.setProperty('--color-secondary-rgb', `${secondaryRgb.r}, ${secondaryRgb.g}, ${secondaryRgb.b}`);
+        }
+      };
+
+      // Un solo reintento tras una breve espera: si el backend está en medio de un
+      // reinicio (deploy/restart de desarrollo), esta llamada puede fallar una vez
+      // sin que el negocio realmente carezca de módulos habilitados.
       apiClient.get("/api/v1/empresa/mi-config")
         .then((res) => {
-          if (res.data) {
-            const data = res.data;
-            setBranding(data);
-            
-            // Inyectar variables de color personalizadas de la empresa
-            const primaryColor = data.color_primario || "#8b5cf6";
-            const secondaryColor = data.color_secundario || "#6366f1";
-            
-            document.documentElement.style.setProperty('--color-primary', primaryColor);
-            document.documentElement.style.setProperty('--color-secondary', secondaryColor);
-            
-            const primaryRgb = hexToRgb(primaryColor);
-            const secondaryRgb = hexToRgb(secondaryColor);
-            if (primaryRgb) {
-              document.documentElement.style.setProperty('--color-primary-rgb', `${primaryRgb.r}, ${primaryRgb.g}, ${primaryRgb.b}`);
-            }
-            if (secondaryRgb) {
-              document.documentElement.style.setProperty('--color-secondary-rgb', `${secondaryRgb.r}, ${secondaryRgb.g}, ${secondaryRgb.b}`);
-            }
-          }
+          if (res.data) aplicarBranding(res.data);
           setInicializado(true);
         })
         .catch(() => {
-          setInicializado(true);
+          setTimeout(() => {
+            apiClient.get("/api/v1/empresa/mi-config")
+              .then((res) => { if (res.data) aplicarBranding(res.data); })
+              .catch(() => {})
+              .finally(() => setInicializado(true));
+          }, 1500);
         });
     }
   }, [autenticado]);
@@ -171,7 +180,7 @@ export default function App() {
           modulosHabilitados={modulosHabilitados}
         />
         <main className="flex-1 overflow-y-auto">
-          {view === "dashboard" && <DashboardMaestro />}
+          {view === "dashboard" && <DashboardMaestro tipoNegocio={branding?.tipo_negocio} rol={rol} />}
           {view === "delivery" && (rol === "repartidor" ? <ModuloRepartidor /> : <MapaDelivery />)}
           {view === "almacen" && <ModuloAlmacen tasaBcv={tasaBcv} />}
           {view === "ingreso" && (
@@ -180,7 +189,7 @@ export default function App() {
             </div>
           )}
           {view === "crm" && <ModuloCRM />}
-          {view === "ficha" && <FichaProducto />}
+          {view === "ficha" && <CatalogoProductos tasaBcv={tasaBcv} />}
           {view === "pos" && <ModuloCaja />}
           {view === "consola" && <ModuloEmpresas />}
           {view === "pedidos" && <ModuloPedidos />}

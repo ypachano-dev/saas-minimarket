@@ -75,10 +75,44 @@ interface LogBot {
   created_at: string;
 }
 
+interface SegmentoCliente {
+  cliente_id: number;
+  nombre: string;
+  telefono: string | null;
+  segmento: string;
+  dias_ultima_compra: number | null;
+  frecuencia_90d: number;
+  monto_90d: number | string;
+  saldo_cxc: number | string;
+  saldo_cxc_vencido: boolean;
+  recomendacion: string;
+}
+
+interface InteligenciaCRM {
+  clientes: SegmentoCliente[];
+  resumen_segmentos: Record<string, number>;
+  monto_en_riesgo_usd: number | string;
+}
+
+interface MensajeCampana {
+  cliente_id: number;
+  nombre: string;
+  telefono: string | null;
+  mensaje: string;
+}
+
 const badgeEnvio: Record<string, string> = {
   respondido: "bg-emerald-50 text-emerald-700",
   enviado: "bg-blue-50 text-blue-700",
   fallido: "bg-red-50 text-red-700",
+};
+
+const SEGMENTOS_INFO: Record<string, { emoji: string; cls: string; orden: number }> = {
+  "VIP": { emoji: "👑", cls: "bg-violet-100 text-violet-700 border-violet-200", orden: 0 },
+  "En Riesgo": { emoji: "⚠️", cls: "bg-amber-100 text-amber-700 border-amber-200", orden: 1 },
+  "Inactivo": { emoji: "💤", cls: "bg-rose-100 text-rose-700 border-rose-200", orden: 2 },
+  "Nuevo": { emoji: "✨", cls: "bg-blue-100 text-blue-700 border-blue-200", orden: 3 },
+  "Activo": { emoji: "✅", cls: "bg-emerald-100 text-emerald-700 border-emerald-200", orden: 4 },
 };
 
 const inputCls = "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
@@ -108,10 +142,52 @@ export default function ModuloCRM() {
   const [aloModal, setAloModal] = useState<{ mensaje: string; telefono: string | null } | null>(null);
   const [copiado, setCopiado] = useState(false);
 
+  // --- Inteligencia CRM: segmentación RFM y campañas masivas con ALO ---
+  const [inteligencia, setInteligencia] = useState<InteligenciaCRM | null>(null);
+  const [segmentoCampana, setSegmentoCampana] = useState<string | null>(null);
+  const [generandoCampana, setGenerandoCampana] = useState(false);
+  const [resultadoCampana, setResultadoCampana] = useState<{ segmento: string; fuente: string; mensajes: MensajeCampana[] } | null>(null);
+  const [copiadoCampanaId, setCopiadoCampanaId] = useState<number | null>(null);
+
+  const cargarInteligencia = () => {
+    apiClient.get<InteligenciaCRM>("/api/v1/crm/inteligencia").then((res) => setInteligencia(res.data)).catch(() => setInteligencia(null));
+  };
+
   useEffect(() => {
     apiClient.get<Cliente[]>("/api/v1/clientes").then((res) => setClientes(res.data)).catch(() => setClientes([]));
     apiClient.get<LogBot[]>("/api/v1/crm/postventa-logs").then((res) => setLogsGenerales(res.data)).catch(() => setLogsGenerales([]));
+    cargarInteligencia();
   }, []);
+
+  const segmentoPorCliente = useMemo(() => {
+    const mapa = new Map<number, SegmentoCliente>();
+    inteligencia?.clientes.forEach((c) => mapa.set(c.cliente_id, c));
+    return mapa;
+  }, [inteligencia]);
+
+  async function generarCampana(segmento: string) {
+    setSegmentoCampana(segmento);
+    setGenerandoCampana(true);
+    setResultadoCampana(null);
+    try {
+      const { data } = await apiClient.post<{ segmento: string; fuente: string; total_segmento: number; generados: MensajeCampana[] }>(
+        "/api/v1/agentes/alo/campana",
+        { segmento, limite: 15 }
+      );
+      setResultadoCampana({ segmento: data.segmento, fuente: data.fuente, mensajes: data.generados });
+    } catch {
+      setMsg({ tipo: "error", texto: "ALO no pudo generar la campaña en este momento." });
+    } finally {
+      setGenerandoCampana(false);
+    }
+  }
+
+  function copiarMensajeCampana(item: MensajeCampana) {
+    navigator.clipboard.writeText(item.mensaje).then(() => {
+      setCopiadoCampanaId(item.cliente_id);
+      setTimeout(() => setCopiadoCampanaId(null), 2000);
+    });
+  }
 
   const clientesFiltrados = useMemo(() => {
     const termino = busqueda.trim().toLowerCase();
@@ -198,6 +274,7 @@ export default function ModuloCRM() {
     ? Math.floor((Date.now() - new Date(tickets[0].created_at).getTime()) / 86400000)
     : null;
   const saldoCxcTotal = cxc.filter((c) => c.status !== "pagada").reduce((acc, c) => acc + Number(c.saldo), 0);
+  const segmentoSel = clienteSel ? segmentoPorCliente.get(clienteSel.id) ?? null : null;
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-4">
@@ -228,6 +305,8 @@ export default function ModuloCRM() {
             ) : (
               clientesFiltrados.map((c) => {
                 const activo = clienteSel?.id === c.id;
+                const seg = segmentoPorCliente.get(c.id);
+                const segInfo = seg ? SEGMENTOS_INFO[seg.segmento] : null;
                 return (
                   <button
                     key={c.id}
@@ -237,11 +316,18 @@ export default function ModuloCRM() {
                   >
                     <p className={`font-bold text-sm ${activo ? "text-blue-700" : "text-slate-800"}`}>{c.nombre}</p>
                     <p className="text-[11px] text-slate-400 font-mono">{c.cedula}</p>
-                    {Number(c.limite_credito) > 0 && (
-                      <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full mt-1 inline-block">
-                        Límite: ${fmt(c.limite_credito)}
-                      </span>
-                    )}
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {segInfo && (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${segInfo.cls}`}>
+                          {segInfo.emoji} {seg!.segmento}
+                        </span>
+                      )}
+                      {Number(c.limite_credito) > 0 && (
+                        <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full inline-block">
+                          Límite: ${fmt(c.limite_credito)}
+                        </span>
+                      )}
+                    </div>
                   </button>
                 );
               })
@@ -252,7 +338,111 @@ export default function ModuloCRM() {
         {/* FICHA DEL CLIENTE / VISTA GENERAL */}
         <div className="lg:col-span-3 space-y-6">
           {!clienteSel ? (
-            <section className="bg-white rounded-3xl border border-slate-100/80 shadow-sm p-6 space-y-4">
+            <>
+              {/* INTELIGENCIA CRM: segmentación RFM en vivo, sin IA (siempre disponible) */}
+              <section className="bg-white rounded-3xl border border-slate-100/80 shadow-sm p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">🧠 Inteligencia CRM</h3>
+                    <p className="text-xs text-slate-400">Segmentación automática de tu cartera de clientes, calculada con datos reales.</p>
+                  </div>
+                  {inteligencia && Number(inteligencia.monto_en_riesgo_usd) > 0 && (
+                    <span className="text-xs font-bold bg-rose-50 text-rose-700 border border-rose-100 px-3 py-1.5 rounded-full">
+                      ${fmt(inteligencia.monto_en_riesgo_usd)} en riesgo
+                    </span>
+                  )}
+                </div>
+
+                {!inteligencia ? (
+                  <p className="text-sm text-slate-400">Calculando segmentos...</p>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    {Object.entries(SEGMENTOS_INFO).sort((a, b) => a[1].orden - b[1].orden).map(([segmento, info]) => {
+                      const count = inteligencia.resumen_segmentos[segmento] ?? 0;
+                      return (
+                        <div key={segmento} className={`rounded-2xl border p-3.5 text-center ${info.cls}`}>
+                          <p className="text-2xl">{info.emoji}</p>
+                          <p className="text-2xl font-black">{count}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-wide">{segmento}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              {/* CAMPAÑAS MASIVAS CON ALO */}
+              <section className="bg-white rounded-3xl border border-slate-100/80 shadow-sm p-6 space-y-4">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">🚀 Campañas con ALO</h3>
+                  <p className="text-xs text-slate-400">Elige un segmento y ALO redacta un mensaje personalizado para cada cliente, listo para enviar por WhatsApp.</p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {inteligencia && Object.entries(SEGMENTOS_INFO).sort((a, b) => a[1].orden - b[1].orden).map(([segmento, info]) => {
+                    const count = inteligencia.resumen_segmentos[segmento] ?? 0;
+                    if (count === 0) return null;
+                    const generandoEste = generandoCampana && segmentoCampana === segmento;
+                    return (
+                      <button
+                        key={segmento}
+                        type="button"
+                        disabled={generandoCampana}
+                        onClick={() => generarCampana(segmento)}
+                        className={`text-xs font-bold px-3.5 py-2 rounded-xl border transition-all disabled:opacity-50 ${info.cls} hover:shadow-sm`}
+                      >
+                        {generandoEste ? "ALO está redactando..." : `${info.emoji} Generar para ${count} cliente(s) ${segmento}`}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {resultadoCampana && (
+                  <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4 space-y-2.5 animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-bold text-violet-800">
+                        ✨ {resultadoCampana.mensajes.length} mensaje(s) para el segmento "{resultadoCampana.segmento}"
+                        {resultadoCampana.fuente === "ia" ? " · generados por IA" : " · plantilla (configura ANTHROPIC_API_KEY para personalización por IA)"}
+                      </p>
+                      <button type="button" onClick={() => setResultadoCampana(null)} className="text-xs text-slate-400 hover:text-slate-600 font-semibold">✕ Cerrar</button>
+                    </div>
+                    {resultadoCampana.mensajes.length === 0 ? (
+                      <p className="text-xs text-slate-400">No hay clientes en este segmento.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-80 overflow-y-auto">
+                        {resultadoCampana.mensajes.map((m) => (
+                          <div key={m.cliente_id} className="bg-white rounded-2xl border border-violet-100 p-3.5 space-y-2">
+                            <p className="text-xs font-bold text-slate-800">{m.nombre}</p>
+                            <p className="text-xs text-slate-600 whitespace-pre-wrap">{m.mensaje}</p>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => copiarMensajeCampana(m)}
+                                className="text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-full transition-all"
+                              >
+                                {copiadoCampanaId === m.cliente_id ? "✓ Copiado" : "📋 Copiar"}
+                              </button>
+                              {m.telefono && (
+                                <a
+                                  href={`https://wa.me/${m.telefono.replace(/\D/g, "")}?text=${encodeURIComponent(m.mensaje)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-full transition-all"
+                                >
+                                  💬 Enviar por WhatsApp
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+
+              {/* ACTIVIDAD GENERAL DE POSTVENTA */}
+              <section className="bg-white rounded-3xl border border-slate-100/80 shadow-sm p-6 space-y-4">
               <h3 className="text-lg font-bold text-slate-900">🤖 Actividad General de Postventa</h3>
               {logsGenerales.length === 0 ? (
                 <p className="text-sm text-slate-400">Sin actividad del bot todavía. Selecciona un cliente a la izquierda para ver su ficha completa.</p>
@@ -275,7 +465,8 @@ export default function ModuloCRM() {
                   ))}
                 </ul>
               )}
-            </section>
+              </section>
+            </>
           ) : cargandoFicha ? (
             <p className="text-center text-sm text-slate-400 py-16">Cargando ficha del cliente...</p>
           ) : (
@@ -284,7 +475,14 @@ export default function ModuloCRM() {
               <section className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <h3 className="text-xl font-black text-slate-900">{clienteSel.nombre}</h3>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-xl font-black text-slate-900">{clienteSel.nombre}</h3>
+                      {segmentoSel && (
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${SEGMENTOS_INFO[segmentoSel.segmento]?.cls ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>
+                          {SEGMENTOS_INFO[segmentoSel.segmento]?.emoji} {segmentoSel.segmento}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs font-mono text-slate-400 mt-0.5">{clienteSel.cedula}</p>
                     <div className="flex flex-wrap gap-3 mt-2 text-xs text-slate-500">
                       {clienteSel.telefono && <span>📞 {clienteSel.telefono}</span>}
@@ -319,6 +517,13 @@ export default function ModuloCRM() {
                     <p className="text-sm font-bold text-slate-700">{ordenes.length}</p>
                   </div>
                 </div>
+
+                {segmentoSel && (
+                  <div className="mt-3 bg-violet-50 border border-violet-100 rounded-2xl p-3.5 flex items-center gap-2.5">
+                    <span className="text-lg">🎯</span>
+                    <p className="text-xs font-bold text-violet-800">Acción sugerida: {segmentoSel.recomendacion}</p>
+                  </div>
+                )}
               </section>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

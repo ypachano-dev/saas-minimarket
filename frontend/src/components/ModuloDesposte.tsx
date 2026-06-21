@@ -16,7 +16,16 @@ interface ItemDestinoForm {
   peso: string;
 }
 
-export default function ModuloDesposte() {
+interface ModuloDesposteProps {
+  // Si viene, este formulario ejecuta una solicitud de desposte ya creada por Caja
+  // (producto origen fijo, no se puede desviar) en vez del flujo legacy ad-hoc.
+  solicitudId?: number;
+  productoOrigenIdPrellenado?: number;
+  cantidadEstimadaPrellenada?: number;
+  onEjecutado?: (resultado: any) => void;
+}
+
+export default function ModuloDesposte({ solicitudId, productoOrigenIdPrellenado, cantidadEstimadaPrellenada, onEjecutado }: ModuloDesposteProps = {}) {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [cargando, setCargando] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -49,6 +58,17 @@ export default function ModuloDesposte() {
   useEffect(() => {
     cargarProductos();
   }, []);
+
+  // Pre-rellenar producto origen y peso estimado cuando se ejecuta una solicitud de Caja
+  useEffect(() => {
+    if (productoOrigenIdPrellenado) {
+      setProductoOrigenId(productoOrigenIdPrellenado);
+      if (cantidadEstimadaPrellenada) {
+        setPesoOrigen(String(cantidadEstimadaPrellenada));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productoOrigenIdPrellenado, cantidadEstimadaPrellenada]);
 
   // Filter products for source (must be sold by weight)
   const productosOrigenList = productos.filter((p) => p.tipo_venta === "peso");
@@ -106,20 +126,28 @@ export default function ModuloDesposte() {
 
     setProcesando(true);
     try {
-      const payload = {
-        producto_origen_id: Number(productoOrigenId),
-        peso_origen: pesoOrigenNum,
-        items_destino: itemsFiltrados.map((item) => ({
-          producto_id: Number(item.producto_id),
-          peso: Number(item.peso),
-        })),
-        merma_peso: Number(mermaPeso.toFixed(3)),
-        observaciones: observaciones.trim() || undefined,
-      };
+      const itemsPayload = itemsFiltrados.map((item) => ({
+        producto_id: Number(item.producto_id),
+        peso: Number(item.peso),
+      }));
 
-      const res = await apiClient.post("/api/v1/desposte", payload);
+      const res = solicitudId
+        ? await apiClient.post(`/api/v1/desposte-solicitudes/${solicitudId}/ejecutar`, {
+            peso_origen: pesoOrigenNum,
+            items_destino: itemsPayload,
+            observaciones: observaciones.trim() || undefined,
+          })
+        : await apiClient.post("/api/v1/desposte", {
+            producto_origen_id: Number(productoOrigenId),
+            peso_origen: pesoOrigenNum,
+            items_destino: itemsPayload,
+            merma_peso: Number(mermaPeso.toFixed(3)),
+            observaciones: observaciones.trim() || undefined,
+          });
+
+      const desposteResultado = solicitudId ? res.data.desposte : res.data;
       setSuccessData({
-        ...res.data,
+        ...desposteResultado,
         prodOrigenName: prodOrigenSel?.nombre,
         itemsDestinoNombres: itemsFiltrados.map((i) => {
           const p = productos.find((prod) => prod.id === Number(i.producto_id));
@@ -129,6 +157,8 @@ export default function ModuloDesposte() {
         mermaPeso,
         mermaPorcentaje,
       });
+
+      onEjecutado?.(res.data);
 
       // Reset form
       setProductoOrigenId("");
@@ -242,21 +272,27 @@ export default function ModuloDesposte() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <label className="flex flex-col">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                  Producto de Origen
+                  Producto de Origen {solicitudId && <span className="text-violet-500">(fijado por la solicitud)</span>}
                 </span>
-                <select
-                  value={productoOrigenId}
-                  onChange={(e) => setProductoOrigenId(Number(e.target.value) || "")}
-                  required
-                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 font-bold transition-all text-slate-800"
-                >
-                  <option value="">Seleccionar canal...</option>
-                  {productosOrigenList.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre} (Stock: {fmtKg(p.stock_total)} kg)
-                    </option>
-                  ))}
-                </select>
+                {solicitudId ? (
+                  <div className="w-full rounded-xl border border-violet-200 bg-violet-50 px-3.5 py-2.5 text-sm font-bold text-violet-800">
+                    {prodOrigenSel?.nombre ?? `Producto #${productoOrigenId}`}
+                  </div>
+                ) : (
+                  <select
+                    value={productoOrigenId}
+                    onChange={(e) => setProductoOrigenId(Number(e.target.value) || "")}
+                    required
+                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 font-bold transition-all text-slate-800"
+                  >
+                    <option value="">Seleccionar canal...</option>
+                    {productosOrigenList.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre} (Stock: {fmtKg(p.stock_total)} kg)
+                      </option>
+                    ))}
+                  </select>
+                )}
               </label>
 
               <label className="flex flex-col">

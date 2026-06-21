@@ -88,6 +88,7 @@ class ProductoBase(BaseModel):
     tipo_envase: Optional[str] = None
     ubicacion: Optional[str] = None
     refrigerado: bool = False
+    temperatura_conservacion: Optional[str] = "ambiente"
     perecedero: bool = False
     fecha_elaboracion: Optional[datetime.date] = None
     fecha_vencimiento: Optional[datetime.date] = None
@@ -101,6 +102,7 @@ class ProductoBase(BaseModel):
     tipo_venta: str = "unidad"  # "unidad" o "peso"
     factor_merma: Optional[Decimal] = None
     peso: Optional[Decimal] = None
+    foto_url: Optional[str] = None
 
 # Molde de entrada para registrar un Producto
 class ProductoCreate(ProductoBase):
@@ -118,6 +120,7 @@ class ProductoUpdate(BaseModel):
     tipo_envase: Optional[str] = None
     ubicacion: Optional[str] = None
     refrigerado: Optional[bool] = None
+    temperatura_conservacion: Optional[str] = None
     perecedero: Optional[bool] = None
     fecha_elaboracion: Optional[datetime.date] = None
     fecha_vencimiento: Optional[datetime.date] = None
@@ -131,6 +134,7 @@ class ProductoUpdate(BaseModel):
     tipo_venta: Optional[str] = None
     factor_merma: Optional[Decimal] = None
     peso: Optional[Decimal] = None
+    foto_url: Optional[str] = None
     status: Optional[bool] = None
 
 # Molde de salida con los datos completos del Producto
@@ -567,6 +571,49 @@ class CuentaPorPagarResponse(BaseModel):
 class AbonoCreate(BaseModel):
     monto: Decimal
 
+# --- Gastos Fijos / Renglones (servicios, nómina, alquileres, mantenimiento...) ---
+
+class RenglonGastoCreate(BaseModel):
+    nombre: str
+    categoria: str = "otro"
+    monto_esperado_usd: Decimal = Decimal("0")
+    frecuencia: str = "mensual"  # semanal, quincenal, mensual, unico
+
+class RenglonGastoUpdate(BaseModel):
+    nombre: Optional[str] = None
+    categoria: Optional[str] = None
+    monto_esperado_usd: Optional[Decimal] = None
+    frecuencia: Optional[str] = None
+    activo: Optional[bool] = None
+
+class RenglonGastoResponse(BaseModel):
+    id: int
+    nombre: str
+    categoria: str
+    monto_esperado_usd: Decimal
+    frecuencia: str
+    activo: bool
+    periodo_label: str
+    monto_pagado_periodo: Decimal
+    saldo_pendiente_periodo: Decimal
+
+class PagoRenglonCreate(BaseModel):
+    monto_usd: Decimal
+    fecha_pago: Optional[datetime.date] = None
+    comprobante_url: Optional[str] = None
+    observaciones: Optional[str] = None
+
+class PagoRenglonResponse(BaseModel):
+    id: int
+    renglon_id: int
+    renglon_nombre: str
+    monto_usd: Decimal
+    fecha_pago: datetime.date
+    comprobante_url: Optional[str] = None
+    observaciones: Optional[str] = None
+    registrado_por_nombre: Optional[str] = None
+    created_at: datetime.datetime
+
 class ResumenCarteraResponse(BaseModel):
     total_por_cobrar: Decimal
     total_por_cobrar_vencido: Decimal
@@ -601,6 +648,41 @@ class EstadisticasResumenResponse(BaseModel):
     mermas_mes_usd_equivalente: Decimal
     productos_stock_critico: int
 
+# --- Esquemas para el Dashboard interactivo con drill-down por rubro y rango de fechas ---
+
+class ClienteTopItem(BaseModel):
+    cliente_id: int
+    nombre: str
+    monto_usd: Decimal
+    num_compras: int
+
+class RubroDetalleResponse(BaseModel):
+    rubro: str
+    desde: datetime.date
+    hasta: datetime.date
+    monto_total_usd: Decimal
+    kilos_total: Decimal
+    tickets_total: int
+    top_productos_por_monto: List[ProductoTopItem]
+    top_productos_por_cantidad: List[ProductoTopItem]
+    mejores_clientes: List[ClienteTopItem]
+
+class MetricaDepartamentoItem(BaseModel):
+    linea: str
+    nombre: str
+    kilos_despachados: Decimal
+    ventas_usd: Decimal
+    merma_kilos: Decimal
+    rendimiento: float
+    personal_comision: Decimal = Decimal("0")
+
+class DashboardAvanzadoResponse(BaseModel):
+    desde: datetime.date
+    hasta: datetime.date
+    deptos: List[MetricaDepartamentoItem]
+    reponer: List[dict] = []
+    vencer: List[dict] = []
+
 # --- Esquemas para los Agentes de IA (VALE, YHORGE, ALO) ---
 
 class AgenteConsulta(BaseModel):
@@ -615,6 +697,41 @@ class AloConsulta(BaseModel):
     cliente_id: int
     contexto: Optional[str] = None  # ej. el ítem faltante que el cliente pidió
     pregunta: Optional[str] = None  # pregunta libre del vendedor/cajero sobre este cliente
+
+# --- Inteligencia CRM: segmentación RFM y campañas masivas de ALO ---
+
+class SegmentoClienteItem(BaseModel):
+    cliente_id: int
+    nombre: str
+    telefono: Optional[str] = None
+    segmento: str  # VIP, Activo, En Riesgo, Inactivo, Nuevo
+    dias_ultima_compra: Optional[int] = None
+    frecuencia_90d: int
+    monto_90d: Decimal
+    saldo_cxc: Decimal
+    saldo_cxc_vencido: bool
+    recomendacion: str
+
+class InteligenciaCRMResponse(BaseModel):
+    clientes: List[SegmentoClienteItem]
+    resumen_segmentos: dict
+    monto_en_riesgo_usd: Decimal
+
+class CampanaAloRequest(BaseModel):
+    segmento: str
+    limite: int = 15
+
+class CampanaAloItem(BaseModel):
+    cliente_id: int
+    nombre: str
+    telefono: Optional[str] = None
+    mensaje: str
+
+class CampanaAloResponse(BaseModel):
+    segmento: str
+    fuente: str  # "ia" si al menos un mensaje vino de IA, "reglas" si todos cayeron al fallback
+    total_segmento: int
+    generados: List[CampanaAloItem]
 
 # --- Esquemas para Desposte (descomposición de un producto entero en sus cortes) ---
 
@@ -647,6 +764,49 @@ class DesposteResponse(BaseModel):
     observaciones: Optional[str] = None
     created_at: datetime.datetime
     items: List[DesposteItemResponse] = []
+
+# --- Esquemas para Solicitud de Desposte (flujo Caja -> Balanza -> Verificación) ---
+
+class DesposteSolicitudCreate(BaseModel):
+    producto_origen_id: int
+    cantidad_estimada: Decimal
+    comentario_solicitud: Optional[str] = None
+    departamento: Optional[str] = None
+
+class DesposteSolicitudEjecutar(BaseModel):
+    peso_origen: Decimal
+    items_destino: List[DesposteItemCreate]
+    observaciones: Optional[str] = None
+
+class DesposteSolicitudVerificar(BaseModel):
+    comentario_verificacion: Optional[str] = None
+
+class DesposteSolicitudCancelar(BaseModel):
+    motivo: Optional[str] = None
+
+class DesposteSolicitudResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    empresa_id: int
+    producto_origen_id: int
+    producto_origen_nombre: Optional[str] = None
+    cantidad_estimada: Decimal
+    comentario_solicitud: Optional[str] = None
+    solicitado_por_id: Optional[int] = None
+    solicitado_por_nombre: Optional[str] = None
+    departamento: Optional[str] = None
+    estatus: str
+    desposte_id: Optional[int] = None
+    ejecutado_por_id: Optional[int] = None
+    ejecutado_por_nombre: Optional[str] = None
+    ejecutado_en: Optional[datetime.datetime] = None
+    verificado_por_id: Optional[int] = None
+    verificado_por_nombre: Optional[str] = None
+    verificado_en: Optional[datetime.datetime] = None
+    comentario_verificacion: Optional[str] = None
+    cancelado_motivo: Optional[str] = None
+    created_at: datetime.datetime
+    desposte: Optional[DesposteResponse] = None
 
 # --- Esquemas para Recepción de Mercancía (Ingreso / Descarga unificados) ---
 
@@ -826,6 +986,7 @@ class RutaActividadResponse(BaseModel):
     foto_soporte_url: Optional[str] = None
     factura_soporte_monto: Optional[Decimal] = None
     created_at: datetime.datetime
+    actualizado_en: Optional[datetime.datetime] = None
 
 class RutaVendedorCreate(BaseModel):
     nombre_ruta: str
@@ -862,4 +1023,14 @@ class ActividadAvanceUpdate(BaseModel):
     comentarios_avance: Optional[str] = None
     foto_soporte_url: Optional[str] = None
     factura_soporte_monto: Optional[Decimal] = None
+
+class ActividadRtcItem(BaseModel):
+    tipo: str  # visita, orden, avance_ruta
+    fecha: datetime.datetime
+    vendedor_id: int
+    vendedor_nombre: str
+    cliente_id: Optional[int] = None
+    cliente_nombre: Optional[str] = None
+    descripcion: str
+    monto_usd: Optional[Decimal] = None
 

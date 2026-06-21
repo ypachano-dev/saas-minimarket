@@ -1,6 +1,8 @@
-import { useRef, useState, useEffect, type KeyboardEvent } from "react";
+import { useRef, useState, useEffect, useCallback, type KeyboardEvent } from "react";
 import apiClient from "../api/client";
 import DeliveryOrderForm from "./DeliveryOrderForm";
+import ModalSolicitudDesposte from "./ModalSolicitudDesposte";
+import { normalizeDept } from "../lib/departamentos";
 
 interface ClienteLite {
   id: number;
@@ -46,15 +48,137 @@ const fmtKg = (n: number) => n.toLocaleString("es-VE", { minimumFractionDigits: 
 const fmt = (n: number) => n.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputClsSmall = "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 
-// Helper to normalize lines and match them
-const normalizeDept = (linea: string | null | undefined): string => {
-  if (!linea) return "";
-  const norm = linea.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  if (norm.includes("carniceria")) return "carniceria";
-  if (norm.includes("verduleria")) return "verduleria";
-  if (norm.includes("charcuteria")) return "charcuteria";
-  return norm;
+const ESTADO_LABEL_DESPOSTE: Record<string, { label: string; cls: string }> = {
+  verificado: { label: "Verificado", cls: "bg-emerald-100 text-emerald-700" },
+  cancelado: { label: "Cancelado", cls: "bg-slate-200 text-slate-600" },
 };
+
+// Seguimiento del flujo Caja -> Balanza -> Caja: se muestra igual en ambas pantallas de
+// ModuloCaja (con y sin cliente seleccionado) para que una solicitud nunca "desaparezca"
+// de la vista del cajero mientras está pendiente o recién ejecutada.
+function SeguimientoDesposteCaja({
+  pendientes, completadas, mostrarVerificar, setMostrarVerificar, verificandoId, onVerificar,
+  mostrarHistorial, onToggleHistorial, historial,
+  mostrarSolicitar, setMostrarSolicitar, onCreadoSolicitud,
+}: {
+  pendientes: any[]; completadas: any[]; mostrarVerificar: boolean; setMostrarVerificar: (fn: (v: boolean) => boolean) => void;
+  verificandoId: number | null; onVerificar: (id: number) => void;
+  mostrarHistorial: boolean; onToggleHistorial: () => void; historial: any[];
+  mostrarSolicitar: boolean; setMostrarSolicitar: (v: boolean) => void; onCreadoSolicitud: () => void;
+}) {
+  return (
+    <>
+      {/* Solicitudes de desposte ya enviadas a Balanza, esperando a que las ejecuten */}
+      {pendientes.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-3xl p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">⏳</span>
+            <h4 className="font-black tracking-tight text-sm text-amber-900">DESPOSTE PENDIENTE EN BALANZA ({pendientes.length})</h4>
+          </div>
+          {pendientes.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-3 bg-white rounded-2xl border border-amber-100 px-4 py-2.5">
+              <div>
+                <p className="text-xs font-bold text-slate-800">
+                  {s.producto_origen_nombre} — {Number(s.cantidad_estimada).toFixed(3)} kg estimados · {s.departamento}
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  Solicitado por {s.solicitado_por_nombre ?? "—"} el {new Date(s.created_at).toLocaleString("es-VE")}
+                  {s.comentario_solicitud ? ` — "${s.comentario_solicitud}"` : ""}
+                </p>
+              </div>
+              <span className="bg-amber-100 text-amber-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase whitespace-nowrap">Esperando a Balanza</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Desposte(s) ejecutado(s) por Balanza, pendientes de verificación */}
+      {completadas.length > 0 && (
+        <div
+          onClick={() => setMostrarVerificar((v) => !v)}
+          className="bg-emerald-600 hover:bg-emerald-700 text-white p-4 rounded-3xl flex items-center justify-between shadow-lg cursor-pointer transition-all border border-emerald-500"
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">✅</span>
+            <div>
+              <h4 className="font-black tracking-tight text-sm md:text-base">DESPOSTE COMPLETADO</h4>
+              <p className="text-xs text-emerald-100 font-medium">Balanza ya pesó y registró el resultado. Verifica y envía a historial.</p>
+            </div>
+          </div>
+          <span className="bg-white/20 text-white font-bold text-xs px-3 py-1.5 rounded-full border border-white/10 uppercase tracking-wider">
+            Revisar ({completadas.length})
+          </span>
+        </div>
+      )}
+
+      {mostrarVerificar && completadas.length > 0 && (
+        <div className="bg-emerald-50/50 border border-emerald-100 rounded-3xl p-4 space-y-2 animate-fade-in">
+          {completadas.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-3 bg-white rounded-2xl border border-emerald-100 px-4 py-3">
+              <div>
+                <p className="text-xs font-bold text-slate-800">
+                  {s.producto_origen_nombre} — Peso real: {s.desposte ? Number(s.desposte.peso_origen).toFixed(3) : "?"} kg, Merma: {s.desposte ? Number(s.desposte.merma_peso).toFixed(3) : "?"} kg
+                </p>
+                <p className="text-[10px] text-slate-400">Ejecutado por {s.ejecutado_por_nombre ?? "Balanza"} el {new Date(s.ejecutado_en).toLocaleString("es-VE")}</p>
+              </div>
+              <button
+                type="button"
+                disabled={verificandoId === s.id}
+                onClick={() => onVerificar(s.id)}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-all whitespace-nowrap"
+              >
+                {verificandoId === s.id ? "Verificando..." : "Verificar y enviar a historial"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onToggleHistorial}
+          className="text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-full transition-all"
+        >
+          🧾 {mostrarHistorial ? "Ocultar historial de desposte" : "Historial de desposte"}
+        </button>
+      </div>
+
+      {mostrarHistorial && (
+        <div className="rounded-3xl border border-slate-100 bg-white shadow-sm overflow-hidden animate-fade-in">
+          <div className="p-3 bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-500">Historial de Desposte (verificados y cancelados)</div>
+          <div className="divide-y divide-slate-50 max-h-72 overflow-y-auto">
+            {historial.length === 0 && <p className="text-xs text-slate-400 text-center py-6">Sin movimientos de desposte en el historial todavía.</p>}
+            {historial.map((s) => (
+              <div key={s.id} className="flex items-center justify-between px-4 py-2.5 text-xs">
+                <div>
+                  <span className="font-bold text-slate-800">{s.producto_origen_nombre}</span>
+                  <span className="text-slate-400"> · {s.departamento} · {new Date(s.created_at).toLocaleDateString("es-VE")}</span>
+                  {s.estatus === "verificado" && s.desposte && (
+                    <p className="text-[10px] text-slate-400">
+                      Peso real {Number(s.desposte.peso_origen).toFixed(3)} kg, merma {Number(s.desposte.merma_peso).toFixed(3)} kg · verificado por {s.verificado_por_nombre ?? "Caja"}
+                    </p>
+                  )}
+                  {s.estatus === "cancelado" && s.cancelado_motivo && <p className="text-[10px] text-slate-400">Motivo: {s.cancelado_motivo}</p>}
+                </div>
+                <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${ESTADO_LABEL_DESPOSTE[s.estatus]?.cls ?? "bg-slate-100 text-slate-500"}`}>
+                  {ESTADO_LABEL_DESPOSTE[s.estatus]?.label ?? s.estatus}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {mostrarSolicitar && (
+        <ModalSolicitudDesposte
+          onClose={() => setMostrarSolicitar(false)}
+          onCreado={() => { setMostrarSolicitar(false); onCreadoSolicitud(); }}
+        />
+      )}
+    </>
+  );
+}
 
 export default function ModuloCaja() {
   const [scan, setScan] = useState("");
@@ -106,6 +230,64 @@ export default function ModuloCaja() {
   const [procesandoPago, setProcesandoPago] = useState(false);
   const [pagoCompletadoData, setPagoCompletadoData] = useState<any | null>(null);
   const [mostrarEnvioDelivery, setMostrarEnvioDelivery] = useState(false);
+
+  // --- Desposte: solicitar (Caja), seguir lo pendiente, verificar lo ya ejecutado por Balanza, e historial ---
+  const [mostrarSolicitarDesposte, setMostrarSolicitarDesposte] = useState(false);
+  const [solicitudesPendientesDesposte, setSolicitudesPendientesDesposte] = useState<any[]>([]);
+  const [solicitudesCompletadas, setSolicitudesCompletadas] = useState<any[]>([]);
+  const [mostrarVerificarDesposte, setMostrarVerificarDesposte] = useState(false);
+  const [verificandoId, setVerificandoId] = useState<number | null>(null);
+  const [mostrarHistorialDesposte, setMostrarHistorialDesposte] = useState(false);
+  const [historialDesposte, setHistorialDesposte] = useState<any[]>([]);
+
+  const cargarSolicitudesPendientesDesposte = useCallback(() => {
+    apiClient.get("/api/v1/desposte-solicitudes", { params: { estatus: "pendiente" } })
+      .then((res) => setSolicitudesPendientesDesposte(res.data))
+      .catch(() => setSolicitudesPendientesDesposte([]));
+  }, []);
+
+  const cargarSolicitudesCompletadas = useCallback(() => {
+    apiClient.get("/api/v1/desposte-solicitudes", { params: { estatus: "completado" } })
+      .then((res) => setSolicitudesCompletadas(res.data))
+      .catch(() => setSolicitudesCompletadas([]));
+  }, []);
+
+  useEffect(() => {
+    cargarSolicitudesPendientesDesposte();
+    cargarSolicitudesCompletadas();
+    const t = setInterval(() => {
+      cargarSolicitudesPendientesDesposte();
+      cargarSolicitudesCompletadas();
+    }, 15000);
+    return () => clearInterval(t);
+  }, [cargarSolicitudesPendientesDesposte, cargarSolicitudesCompletadas]);
+
+  function cargarHistorialDesposte() {
+    Promise.all([
+      apiClient.get("/api/v1/desposte-solicitudes", { params: { estatus: "verificado" } }),
+      apiClient.get("/api/v1/desposte-solicitudes", { params: { estatus: "cancelado" } }),
+    ])
+      .then(([verificadas, canceladas]) => {
+        const todas = [...verificadas.data, ...canceladas.data].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+        setHistorialDesposte(todas);
+      })
+      .catch(() => setHistorialDesposte([]));
+  }
+
+  async function verificarDesposte(id: number) {
+    setVerificandoId(id);
+    try {
+      await apiClient.patch(`/api/v1/desposte-solicitudes/${id}/verificar`, {});
+      cargarSolicitudesCompletadas();
+      if (mostrarHistorialDesposte) cargarHistorialDesposte();
+    } catch {
+      // silencioso: la lista se vuelve a refrescar en el próximo polling
+    } finally {
+      setVerificandoId(null);
+    }
+  }
 
   // --- Cola de clientes en espera ---
   const [colaClientes, setColaClientes] = useState<any[]>([]);
@@ -588,21 +770,45 @@ export default function ModuloCaja() {
   if (!cliente) {
     return (
       <div className="max-w-6xl mx-auto p-6 space-y-6">
+        <SeguimientoDesposteCaja
+          pendientes={solicitudesPendientesDesposte}
+          completadas={solicitudesCompletadas}
+          mostrarVerificar={mostrarVerificarDesposte}
+          setMostrarVerificar={setMostrarVerificarDesposte}
+          verificandoId={verificandoId}
+          onVerificar={verificarDesposte}
+          mostrarHistorial={mostrarHistorialDesposte}
+          onToggleHistorial={() => setMostrarHistorialDesposte((v) => { if (!v) cargarHistorialDesposte(); return !v; })}
+          historial={historialDesposte}
+          mostrarSolicitar={mostrarSolicitarDesposte}
+          setMostrarSolicitar={setMostrarSolicitarDesposte}
+          onCreadoSolicitud={cargarSolicitudesPendientesDesposte}
+        />
+
         {/* Header Section */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-slate-100 pb-4">
           <div>
             <h2 className="text-3xl font-black tracking-tight text-slate-900">Caja / POS</h2>
             <p className="text-sm font-medium text-slate-500">Seleccione un cliente en espera o ingrese sus datos de forma manual.</p>
           </div>
-          <button
-            type="button"
-            onClick={cargarColaClientes}
-            disabled={cargandoCola}
-            className="mt-3 md:mt-0 flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all uppercase tracking-wider"
-          >
-            <span>🔄</span>
-            {cargandoCola ? "Actualizando..." : "Actualizar Cola"}
-          </button>
+          <div className="mt-3 md:mt-0 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMostrarSolicitarDesposte(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-violet-50 hover:bg-violet-600 text-violet-700 hover:text-white border border-violet-100 hover:border-violet-600 font-bold text-xs rounded-xl transition-all uppercase tracking-wider"
+            >
+              🥩 Solicitar Desposte
+            </button>
+            <button
+              type="button"
+              onClick={cargarColaClientes}
+              disabled={cargandoCola}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all uppercase tracking-wider"
+            >
+              <span>🔄</span>
+              {cargandoCola ? "Actualizando..." : "Actualizar Cola"}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
@@ -748,6 +954,21 @@ export default function ModuloCaja() {
         </div>
       )}
 
+      <SeguimientoDesposteCaja
+        pendientes={solicitudesPendientesDesposte}
+        completadas={solicitudesCompletadas}
+        mostrarVerificar={mostrarVerificarDesposte}
+        setMostrarVerificar={setMostrarVerificarDesposte}
+        verificandoId={verificandoId}
+        onVerificar={verificarDesposte}
+        mostrarHistorial={mostrarHistorialDesposte}
+        onToggleHistorial={() => setMostrarHistorialDesposte((v) => { if (!v) cargarHistorialDesposte(); return !v; })}
+        historial={historialDesposte}
+        mostrarSolicitar={mostrarSolicitarDesposte}
+        setMostrarSolicitar={setMostrarSolicitarDesposte}
+        onCreadoSolicitud={cargarSolicitudesPendientesDesposte}
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       
       {/* --- Main Column (Left/Center) --- */}
@@ -760,9 +981,18 @@ export default function ModuloCaja() {
               <h2 className="text-3xl font-black tracking-tight text-slate-900">Caja / POS</h2>
               <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Buscador dinámico: código de barra o interno</p>
             </div>
-            <span className="bg-slate-100 text-slate-700 text-xs font-bold px-3 py-1 rounded-full">
-              Catálogo: {dbProductos.length} Productos
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="bg-slate-100 text-slate-700 text-xs font-bold px-3 py-1 rounded-full">
+                Catálogo: {dbProductos.length} Productos
+              </span>
+              <button
+                type="button"
+                onClick={() => setMostrarSolicitarDesposte(true)}
+                className="bg-violet-50 hover:bg-violet-600 text-violet-700 hover:text-white border border-violet-100 hover:border-violet-600 text-xs font-bold px-3 py-1 rounded-full transition-all"
+              >
+                🥩 Solicitar Desposte
+              </button>
+            </div>
           </div>
 
           <div className="relative mt-4">

@@ -23,7 +23,9 @@ class Producto(Base):
     tipo_envase: Mapped[str | None] = mapped_column(String(50), nullable=True) # Saco 20kg, Bandeja, Botella, Blíster
     ubicacion: Mapped[str | None] = mapped_column(String(100), nullable=True) # Pasillo 2, Cava Carnes, Anaquel A
     refrigerado: Mapped[bool] = mapped_column(Boolean, default=False) # Control de cadena de frío
+    temperatura_conservacion: Mapped[str | None] = mapped_column(String(50), default="ambiente") # ambiente, refrigerado, congelado
     perecedero: Mapped[bool] = mapped_column(Boolean, default=False) # Si tiene fecha de caducidad
+    foto_url: Mapped[str | None] = mapped_column(Text, nullable=True) # URL o Base64 de la imagen del producto
 
     # "unidad" (se vende por pieza) o "peso" (se vende por kg, ej. carnicería/verdulería).
     # Solo los productos "peso" pueden ser origen o destino de un desposte.

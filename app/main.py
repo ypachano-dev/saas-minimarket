@@ -1,3 +1,4 @@
+import calendar
 import datetime
 import os
 from decimal import Decimal
@@ -30,12 +31,13 @@ from app.models.pedido_delivery import PedidoDelivery
 from app.models.orden_compra import OrdenCompra, OrdenCompraItem
 from app.models.tesoreria import CuentaTesoreria, MovimientoTesoreria, BANCOS_VALIDOS
 from app.models.cartera import CuentaPorCobrar, CuentaPorPagar
-from app.models.desposte import Desposte, DesposteItem
+from app.models.desposte import Desposte, DesposteItem, DesposteSolicitud
 from app.models.recepcion import RecepcionMercancia, RecepcionMercanciaItem
 from app.models.auditoria import AuditoriaInventario, AuditoriaInventarioItem
 from app.models.visita import VisitaCliente, EncuestaMarketing
 from app.models.orden_venta import OrdenVenta, OrdenVentaItem
 from app.models.ruta import RutaVendedor, RutaActividad
+from app.models.renglon_gasto import RenglonGasto, PagoRenglon
 from app.core.ai_agent import tiene_agente_ia, consultar_agente
 from app.schemas import (
     RegistroEmpresaAdmin, LoginRequest, Token, TokenData,
@@ -54,15 +56,21 @@ from app.schemas import (
     CuentaPorCobrarCreate, CuentaPorCobrarResponse, CuentaPorPagarCreate, CuentaPorPagarResponse,
     AbonoCreate, ResumenCarteraResponse,
     VentaDiariaItem, ProductoTopItem, VentaPorDepartamentoItem, EstadisticasResumenResponse,
+    ClienteTopItem, RubroDetalleResponse, MetricaDepartamentoItem, DashboardAvanzadoResponse,
     AgenteConsulta, AgenteRespuesta, AloConsulta,
-    DesposteCreate, DesposteResponse, DesposteItemResponse,
+    DesposteCreate, DesposteResponse, DesposteItemResponse, DesposteItemCreate,
+    DesposteSolicitudCreate, DesposteSolicitudEjecutar, DesposteSolicitudVerificar,
+    DesposteSolicitudCancelar, DesposteSolicitudResponse,
     RecepcionMercanciaCreate, RecepcionMercanciaResponse, RecepcionMercanciaItemResponse,
     AuditoriaInventarioCreate, AuditoriaInventarioResponse, AuditoriaInventarioItemResponse, ConteoFisicoUpdate,
     StockProyectadoItem,
     UsuarioGpsUpdate, VendedorUbicacionResponse,
     VisitaClienteCreate, VisitaClienteResponse,
     OrdenVentaCreate, OrdenVentaResponse,
-    RutaVendedorCreate, RutaVendedorResponse, RutaEstadoUpdate, ActividadAvanceUpdate, RutaActividadResponse
+    RutaVendedorCreate, RutaVendedorResponse, RutaEstadoUpdate, ActividadAvanceUpdate, RutaActividadResponse,
+    ActividadRtcItem,
+    RenglonGastoCreate, RenglonGastoUpdate, RenglonGastoResponse, PagoRenglonCreate, PagoRenglonResponse,
+    SegmentoClienteItem, InteligenciaCRMResponse, CampanaAloRequest, CampanaAloItem, CampanaAloResponse
 )
 
 # Grupos de roles para el control de accesos (RBAC)
@@ -75,6 +83,8 @@ ROLES_OPERACION = ["cajero", "admin", "propietario", "repartidor", "vendedor"]
 ROLES_DESPOSTE = ["admin", "propietario", "carnicero", "verdulero", "charcutero"]
 # Lectura de cartera (CxC): gestión + vendedor (necesita ver si el cliente que visita debe, sin poder crear/abonar cuentas)
 ROLES_LECTURA_CARTERA = ROLES_GESTION + ["vendedor"]
+# Quien puede solicitar y verificar un desposte desde Caja (no ejecutarlo: eso es ROLES_DESPOSTE)
+ROLES_SOLICITUD_DESPOSTE = ["admin", "propietario", "cajero"]
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -903,115 +913,149 @@ def listar_mermas(
 ):
     return db.query(Merma).filter(Merma.empresa_id == usuario_actual.eid).all()
 
-# 12b. Registrar Desposte: consume peso del producto origen (ej. Pollo Entero) usando FEFO,
-#      y por cada corte resultante crea un Lote nuevo del producto destino. La merma real
-#      (lo que se pierde en hueso, grasa, sangre, etc.) siempre se recalcula en el servidor.
+# 12b. Lógica compartida de ejecución de un desposte: consume peso del producto origen (ej. Pollo
+#      Entero) usando FEFO, y por cada corte resultante crea un Lote nuevo del producto destino.
+#      La merma real (lo que se pierde en hueso, grasa, sangre, etc.) siempre se recalcula en el
+#      servidor. NO hace commit/rollback propio: el endpoint que la invoca decide la transacción,
+#      para poder atar en una sola operación atómica "mover stock" + "actualizar la solicitud".
+def _ejecutar_desposte(
+    db: Session,
+    empresa_id: int,
+    usuario_id: int,
+    producto_origen_id: int,
+    peso_origen: Decimal,
+    items_destino: list[DesposteItemCreate],
+    observaciones: str | None,
+) -> tuple[Desposte, list[DesposteItem]]:
+    if peso_origen <= 0:
+        raise HTTPException(status_code=400, detail="El peso de origen debe ser mayor a cero.")
+    if not items_destino:
+        raise HTTPException(status_code=400, detail="Debe registrar al menos un corte resultante.")
+
+    producto_origen = db.query(Producto).filter(
+        Producto.id == producto_origen_id,
+        Producto.empresa_id == empresa_id
+    ).first()
+    if not producto_origen:
+        raise HTTPException(status_code=404, detail="El producto de origen no existe o no pertenece a su empresa.")
+
+    peso_total_destino = sum((item.peso for item in items_destino), Decimal("0"))
+    if peso_total_destino > peso_origen:
+        raise HTTPException(
+            status_code=400,
+            detail="La suma de los pesos de los cortes resultantes no puede superar el peso de origen."
+        )
+    if any(item.peso <= 0 for item in items_destino):
+        raise HTTPException(status_code=400, detail="El peso de cada corte resultante debe ser mayor a cero.")
+
+    # 1. Consumir el peso de origen de los lotes activos (FEFO: vencen primero, ingresaron primero)
+    lotes_origen = db.query(Lote).filter(
+        Lote.empresa_id == empresa_id,
+        Lote.producto_id == producto_origen.id,
+        Lote.status == "activo",
+        Lote.cantidad_actual > 0
+    ).order_by(Lote.fecha_vencimiento.asc(), Lote.fecha_ingreso.asc()).all()
+
+    stock_disponible = sum((lote.cantidad_actual for lote in lotes_origen), Decimal("0"))
+    if stock_disponible < peso_origen:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Stock insuficiente de '{producto_origen.nombre}'. Disponible: {stock_disponible}, solicitado: {peso_origen}"
+        )
+
+    fecha_vencimiento_heredada = lotes_origen[0].fecha_vencimiento if lotes_origen else (datetime.date.today() + datetime.timedelta(days=7))
+
+    restante = peso_origen
+    for lote in lotes_origen:
+        if restante <= 0:
+            break
+        descuento = min(lote.cantidad_actual, restante)
+        lote.cantidad_actual -= descuento
+        restante -= descuento
+        if lote.cantidad_actual == 0:
+            lote.status = "agotado"
+
+    # 2. Calcular la merma real en el servidor (nunca confiar en el valor enviado por el cliente)
+    merma_real = (peso_origen - peso_total_destino).quantize(Decimal("0.001"))
+
+    nuevo_desposte = Desposte(
+        empresa_id=empresa_id,
+        usuario_id=usuario_id,
+        producto_origen_id=producto_origen.id,
+        peso_origen=peso_origen,
+        peso_total_destino=peso_total_destino,
+        merma_peso=merma_real,
+        observaciones=observaciones
+    )
+    db.add(nuevo_desposte)
+    db.flush()  # genera nuevo_desposte.id
+
+    # 3. Por cada corte resultante: validar el producto y crear un Lote nuevo con ese peso
+    items_creados: list[DesposteItem] = []
+    for item in items_destino:
+        producto_destino = db.query(Producto).filter(
+            Producto.id == item.producto_id,
+            Producto.empresa_id == empresa_id
+        ).first()
+        if not producto_destino:
+            raise HTTPException(status_code=404, detail=f"El producto destino {item.producto_id} no existe o no pertenece a su empresa.")
+
+        nuevo_lote = Lote(
+            empresa_id=empresa_id,
+            producto_id=producto_destino.id,
+            codigo_lote=f"DESPOSTE-{nuevo_desposte.id}",
+            cantidad_inicial=item.peso,
+            cantidad_actual=item.peso,
+            fecha_ingreso=datetime.date.today(),
+            fecha_vencimiento=fecha_vencimiento_heredada
+        )
+        db.add(nuevo_lote)
+        db.flush()  # genera nuevo_lote.id
+
+        nuevo_item = DesposteItem(
+            desposte_id=nuevo_desposte.id,
+            producto_id=producto_destino.id,
+            lote_id=nuevo_lote.id,
+            peso=item.peso
+        )
+        db.add(nuevo_item)
+        items_creados.append(nuevo_item)
+
+    return nuevo_desposte, items_creados
+
+
+def _desposte_a_response(desposte: Desposte, items: list[DesposteItem]) -> DesposteResponse:
+    return DesposteResponse(
+        id=desposte.id,
+        empresa_id=desposte.empresa_id,
+        producto_origen_id=desposte.producto_origen_id,
+        peso_origen=desposte.peso_origen,
+        peso_total_destino=desposte.peso_total_destino,
+        merma_peso=desposte.merma_peso,
+        observaciones=desposte.observaciones,
+        created_at=desposte.created_at,
+        items=[DesposteItemResponse.model_validate(item) for item in items]
+    )
+
+
+# 12c. Registrar Desposte ad-hoc (sin pasar por una solicitud de Caja): flujo legacy intacto,
+#      sigue siendo atómico de un solo paso para carniceros/verduleros/charcuteros que quieran
+#      despostar algo sin una solicitud previa.
 @app.post("/api/v1/desposte", tags=["Desposte"], response_model=DesposteResponse, status_code=status.HTTP_201_CREATED)
 def crear_desposte(
     datos: DesposteCreate,
     db: Session = Depends(get_db),
     usuario_actual: TokenData = Depends(verificar_rol(ROLES_DESPOSTE))
 ):
-    if datos.peso_origen <= 0:
-        raise HTTPException(status_code=400, detail="El peso de origen debe ser mayor a cero.")
-    if not datos.items_destino:
-        raise HTTPException(status_code=400, detail="Debe registrar al menos un corte resultante.")
-
-    producto_origen = db.query(Producto).filter(
-        Producto.id == datos.producto_origen_id,
-        Producto.empresa_id == usuario_actual.eid
-    ).first()
-    if not producto_origen:
-        raise HTTPException(status_code=404, detail="El producto de origen no existe o no pertenece a su empresa.")
-
-    peso_total_destino = sum((item.peso for item in datos.items_destino), Decimal("0"))
-    if peso_total_destino > datos.peso_origen:
-        raise HTTPException(
-            status_code=400,
-            detail="La suma de los pesos de los cortes resultantes no puede superar el peso de origen."
-        )
-    if any(item.peso <= 0 for item in datos.items_destino):
-        raise HTTPException(status_code=400, detail="El peso de cada corte resultante debe ser mayor a cero.")
-
     try:
-        # 1. Consumir el peso de origen de los lotes activos (FEFO: vencen primero, ingresaron primero)
-        lotes_origen = db.query(Lote).filter(
-            Lote.empresa_id == usuario_actual.eid,
-            Lote.producto_id == producto_origen.id,
-            Lote.status == "activo",
-            Lote.cantidad_actual > 0
-        ).order_by(Lote.fecha_vencimiento.asc(), Lote.fecha_ingreso.asc()).all()
-
-        stock_disponible = sum((lote.cantidad_actual for lote in lotes_origen), Decimal("0"))
-        if stock_disponible < datos.peso_origen:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Stock insuficiente de '{producto_origen.nombre}'. Disponible: {stock_disponible}, solicitado: {datos.peso_origen}"
-            )
-
-        fecha_vencimiento_heredada = lotes_origen[0].fecha_vencimiento if lotes_origen else (datetime.date.today() + datetime.timedelta(days=7))
-
-        restante = datos.peso_origen
-        for lote in lotes_origen:
-            if restante <= 0:
-                break
-            descuento = min(lote.cantidad_actual, restante)
-            lote.cantidad_actual -= descuento
-            restante -= descuento
-            if lote.cantidad_actual == 0:
-                lote.status = "agotado"
-
-        # 2. Calcular la merma real en el servidor (nunca confiar en el valor enviado por el cliente)
-        merma_real = (datos.peso_origen - peso_total_destino).quantize(Decimal("0.001"))
-
-        nuevo_desposte = Desposte(
-            empresa_id=usuario_actual.eid,
-            usuario_id=usuario_actual.usuario_id,
-            producto_origen_id=producto_origen.id,
-            peso_origen=datos.peso_origen,
-            peso_total_destino=peso_total_destino,
-            merma_peso=merma_real,
-            observaciones=datos.observaciones
+        nuevo_desposte, items_creados = _ejecutar_desposte(
+            db, usuario_actual.eid, usuario_actual.usuario_id,
+            datos.producto_origen_id, datos.peso_origen, datos.items_destino, datos.observaciones
         )
-        db.add(nuevo_desposte)
-        db.flush()  # genera nuevo_desposte.id
-
-        # 3. Por cada corte resultante: validar el producto y crear un Lote nuevo con ese peso
-        items_creados: list[DesposteItem] = []
-        for item in datos.items_destino:
-            producto_destino = db.query(Producto).filter(
-                Producto.id == item.producto_id,
-                Producto.empresa_id == usuario_actual.eid
-            ).first()
-            if not producto_destino:
-                raise HTTPException(status_code=404, detail=f"El producto destino {item.producto_id} no existe o no pertenece a su empresa.")
-
-            nuevo_lote = Lote(
-                empresa_id=usuario_actual.eid,
-                producto_id=producto_destino.id,
-                codigo_lote=f"DESPOSTE-{nuevo_desposte.id}",
-                cantidad_inicial=item.peso,
-                cantidad_actual=item.peso,
-                fecha_ingreso=datetime.date.today(),
-                fecha_vencimiento=fecha_vencimiento_heredada
-            )
-            db.add(nuevo_lote)
-            db.flush()  # genera nuevo_lote.id
-
-            nuevo_item = DesposteItem(
-                desposte_id=nuevo_desposte.id,
-                producto_id=producto_destino.id,
-                lote_id=nuevo_lote.id,
-                peso=item.peso
-            )
-            db.add(nuevo_item)
-            items_creados.append(nuevo_item)
-
         db.commit()
         db.refresh(nuevo_desposte)
         for item in items_creados:
             db.refresh(item)
-
     except HTTPException:
         db.rollback()
         raise
@@ -1019,19 +1063,9 @@ def crear_desposte(
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Error al registrar el desposte: {str(e)}")
 
-    return DesposteResponse(
-        id=nuevo_desposte.id,
-        empresa_id=nuevo_desposte.empresa_id,
-        producto_origen_id=nuevo_desposte.producto_origen_id,
-        peso_origen=nuevo_desposte.peso_origen,
-        peso_total_destino=nuevo_desposte.peso_total_destino,
-        merma_peso=nuevo_desposte.merma_peso,
-        observaciones=nuevo_desposte.observaciones,
-        created_at=nuevo_desposte.created_at,
-        items=[DesposteItemResponse.model_validate(item) for item in items_creados]
-    )
+    return _desposte_a_response(nuevo_desposte, items_creados)
 
-# 12c. Listar Desposte: historial de operaciones de desposte (filtrado por empresa)
+# 12d. Listar Desposte: historial de operaciones de desposte (filtrado por empresa)
 @app.get("/api/v1/desposte", tags=["Desposte"], response_model=List[DesposteResponse])
 def listar_desposte(
     db: Session = Depends(get_db),
@@ -1053,6 +1087,182 @@ def listar_desposte(
             items=[DesposteItemResponse.model_validate(item) for item in items]
         ))
     return resultado
+
+# --- Solicitudes de Desposte: flujo Caja (solicita) -> Balanza (ejecuta) -> Caja (verifica) ---
+
+def _solicitud_a_response(db: Session, s: DesposteSolicitud) -> DesposteSolicitudResponse:
+    res = DesposteSolicitudResponse.model_validate(s)
+    producto = db.query(Producto).filter(Producto.id == s.producto_origen_id).first()
+    res.producto_origen_nombre = producto.nombre if producto else None
+    if s.solicitado_por_id:
+        solicitante = db.query(Usuario).filter(Usuario.id == s.solicitado_por_id).first()
+        res.solicitado_por_nombre = solicitante.nombre if solicitante else None
+    if s.ejecutado_por_id:
+        ejecutor = db.query(Usuario).filter(Usuario.id == s.ejecutado_por_id).first()
+        res.ejecutado_por_nombre = ejecutor.nombre if ejecutor else None
+    if s.verificado_por_id:
+        verificador = db.query(Usuario).filter(Usuario.id == s.verificado_por_id).first()
+        res.verificado_por_nombre = verificador.nombre if verificador else None
+    if s.desposte_id:
+        desposte = db.query(Desposte).filter(Desposte.id == s.desposte_id).first()
+        if desposte:
+            items = db.query(DesposteItem).filter(DesposteItem.desposte_id == desposte.id).all()
+            res.desposte = _desposte_a_response(desposte, items)
+    return res
+
+# 12e. Crear solicitud de desposte (Caja): declara la necesidad, NO mueve stock todavía.
+@app.post("/api/v1/desposte-solicitudes", tags=["Desposte"], response_model=DesposteSolicitudResponse, status_code=status.HTTP_201_CREATED)
+def crear_solicitud_desposte(
+    datos: DesposteSolicitudCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_SOLICITUD_DESPOSTE))
+):
+    if datos.cantidad_estimada <= 0:
+        raise HTTPException(status_code=400, detail="La cantidad estimada debe ser mayor a cero.")
+    producto_origen = db.query(Producto).filter(
+        Producto.id == datos.producto_origen_id,
+        Producto.empresa_id == usuario_actual.eid
+    ).first()
+    if not producto_origen:
+        raise HTTPException(status_code=404, detail="El producto de origen no existe o no pertenece a su empresa.")
+
+    nueva_solicitud = DesposteSolicitud(
+        empresa_id=usuario_actual.eid,
+        producto_origen_id=datos.producto_origen_id,
+        cantidad_estimada=datos.cantidad_estimada,
+        comentario_solicitud=datos.comentario_solicitud,
+        solicitado_por_id=usuario_actual.usuario_id,
+        departamento=datos.departamento,
+        estatus="pendiente",
+    )
+    try:
+        db.add(nueva_solicitud)
+        db.commit()
+        db.refresh(nueva_solicitud)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Error al crear la solicitud de desposte: {str(e)}")
+
+    return _solicitud_a_response(db, nueva_solicitud)
+
+# 12f. Listar solicitudes de desposte: Balanza ve su cola de "pendiente" por defecto;
+#      Caja puede filtrar por estatus=completado para ver lo que falta verificar.
+@app.get("/api/v1/desposte-solicitudes", tags=["Desposte"], response_model=List[DesposteSolicitudResponse])
+def listar_solicitudes_desposte(
+    estatus: Optional[str] = None,
+    departamento: Optional[str] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_DESPOSTE + ROLES_SOLICITUD_DESPOSTE))
+):
+    query = db.query(DesposteSolicitud).filter(DesposteSolicitud.empresa_id == usuario_actual.eid)
+    query = query.filter(DesposteSolicitud.estatus == (estatus or "pendiente"))
+    if departamento:
+        query = query.filter(DesposteSolicitud.departamento == departamento)
+    solicitudes = query.order_by(DesposteSolicitud.created_at.asc()).all()
+    return [_solicitud_a_response(db, s) for s in solicitudes]
+
+# 12g. Ejecutar solicitud (Balanza): pesa el producto real y registra los cortes resultantes.
+#      Aquí es donde efectivamente se descuenta el producto origen y se acredita lo despostado,
+#      reutilizando _ejecutar_desposte. Toma el producto_origen de la solicitud (no del body),
+#      para que no se pueda desviar hacia un producto distinto al solicitado por Caja.
+@app.post("/api/v1/desposte-solicitudes/{solicitud_id}/ejecutar", tags=["Desposte"], response_model=DesposteSolicitudResponse)
+def ejecutar_solicitud_desposte(
+    solicitud_id: int,
+    datos: DesposteSolicitudEjecutar,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_DESPOSTE))
+):
+    solicitud = db.query(DesposteSolicitud).filter(
+        DesposteSolicitud.id == solicitud_id,
+        DesposteSolicitud.empresa_id == usuario_actual.eid
+    ).first()
+    if not solicitud:
+        raise HTTPException(status_code=404, detail="Solicitud de desposte no encontrada.")
+    if solicitud.estatus != "pendiente":
+        raise HTTPException(status_code=400, detail=f"Esta solicitud ya está en estatus '{solicitud.estatus}' y no puede ejecutarse de nuevo.")
+
+    try:
+        nuevo_desposte, items_creados = _ejecutar_desposte(
+            db, usuario_actual.eid, usuario_actual.usuario_id,
+            solicitud.producto_origen_id, datos.peso_origen, datos.items_destino, datos.observaciones
+        )
+        solicitud.estatus = "completado"
+        solicitud.desposte_id = nuevo_desposte.id
+        solicitud.ejecutado_por_id = usuario_actual.usuario_id
+        solicitud.ejecutado_en = datetime.datetime.now()
+
+        db.commit()
+        db.refresh(nuevo_desposte)
+        db.refresh(solicitud)
+        for item in items_creados:
+            db.refresh(item)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Error al ejecutar la solicitud de desposte: {str(e)}")
+
+    return _solicitud_a_response(db, solicitud)
+
+# 12h. Verificar y archivar (Caja): confirma que el resultado del desposte ya ejecutado es correcto.
+@app.patch("/api/v1/desposte-solicitudes/{solicitud_id}/verificar", tags=["Desposte"], response_model=DesposteSolicitudResponse)
+def verificar_solicitud_desposte(
+    solicitud_id: int,
+    datos: DesposteSolicitudVerificar,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_SOLICITUD_DESPOSTE))
+):
+    solicitud = db.query(DesposteSolicitud).filter(
+        DesposteSolicitud.id == solicitud_id,
+        DesposteSolicitud.empresa_id == usuario_actual.eid
+    ).first()
+    if not solicitud:
+        raise HTTPException(status_code=404, detail="Solicitud de desposte no encontrada.")
+    if solicitud.estatus != "completado":
+        raise HTTPException(status_code=400, detail=f"Solo se pueden verificar solicitudes en estatus 'completado' (actual: '{solicitud.estatus}').")
+
+    solicitud.estatus = "verificado"
+    solicitud.verificado_por_id = usuario_actual.usuario_id
+    solicitud.verificado_en = datetime.datetime.now()
+    solicitud.comentario_verificacion = datos.comentario_verificacion
+    try:
+        db.commit()
+        db.refresh(solicitud)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Error al verificar la solicitud: {str(e)}")
+
+    return _solicitud_a_response(db, solicitud)
+
+# 12i. Cancelar (Caja o Balanza): solo posible antes de ejecutar, ya que después de "completado"
+#      el stock real ya se movió (cualquier discrepancia se maneja como Merma aparte).
+@app.patch("/api/v1/desposte-solicitudes/{solicitud_id}/cancelar", tags=["Desposte"], response_model=DesposteSolicitudResponse)
+def cancelar_solicitud_desposte(
+    solicitud_id: int,
+    datos: DesposteSolicitudCancelar,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_DESPOSTE + ROLES_SOLICITUD_DESPOSTE))
+):
+    solicitud = db.query(DesposteSolicitud).filter(
+        DesposteSolicitud.id == solicitud_id,
+        DesposteSolicitud.empresa_id == usuario_actual.eid
+    ).first()
+    if not solicitud:
+        raise HTTPException(status_code=404, detail="Solicitud de desposte no encontrada.")
+    if solicitud.estatus != "pendiente":
+        raise HTTPException(status_code=400, detail=f"Solo se pueden cancelar solicitudes pendientes (actual: '{solicitud.estatus}').")
+
+    solicitud.estatus = "cancelado"
+    solicitud.cancelado_motivo = datos.motivo
+    try:
+        db.commit()
+        db.refresh(solicitud)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Error al cancelar la solicitud: {str(e)}")
+
+    return _solicitud_a_response(db, solicitud)
 
 # 13. Actualizar la tasa BCV de la empresa (Bolívares por Dólar). Si no existe, se crea.
 @app.put("/api/v1/tasa", tags=["Tasa de Cambio"], response_model=TasaCambioResponse)
@@ -3344,6 +3554,153 @@ def resumen_cartera(
     return _calcular_resumen_cartera(db, usuario_actual.eid)
 
 
+# --- Gastos Fijos: renglones recurrentes (servicios, nómina, alquileres, mantenimiento...) ---
+# Vital para el cálculo de rendimiento del negocio: a diferencia de Cartera/CxP (deuda puntual
+# con un proveedor por una factura), un renglón es una categoría de costo fijo que se repite
+# periodo a periodo y se abona directamente desde el Dashboard.
+
+def _rango_periodo_actual(frecuencia: str, hoy: datetime.date) -> tuple[datetime.date, datetime.date, str]:
+    if frecuencia == "semanal":
+        inicio = hoy - datetime.timedelta(days=hoy.weekday())
+        fin = inicio + datetime.timedelta(days=6)
+        return inicio, fin, f"Semana del {inicio.strftime('%d/%m')}"
+    if frecuencia == "quincenal":
+        ultimo_dia_mes = calendar.monthrange(hoy.year, hoy.month)[1]
+        if hoy.day <= 15:
+            inicio, fin = hoy.replace(day=1), hoy.replace(day=15)
+        else:
+            inicio, fin = hoy.replace(day=16), hoy.replace(day=ultimo_dia_mes)
+        return inicio, fin, f"Quincena {inicio.strftime('%d/%m')} - {fin.strftime('%d/%m')}"
+    if frecuencia == "unico":
+        return datetime.date(2000, 1, 1), datetime.date(2100, 1, 1), "Pago único"
+    # mensual (default)
+    ultimo_dia_mes = calendar.monthrange(hoy.year, hoy.month)[1]
+    inicio, fin = hoy.replace(day=1), hoy.replace(day=ultimo_dia_mes)
+    meses_es = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    return inicio, fin, f"{meses_es[inicio.month - 1].capitalize()} {inicio.year}"
+
+def _renglon_a_response(db: Session, r: RenglonGasto) -> RenglonGastoResponse:
+    inicio, fin, periodo_label = _rango_periodo_actual(r.frecuencia, datetime.date.today())
+    pagado = Decimal(str(
+        db.query(func.coalesce(func.sum(PagoRenglon.monto_usd), 0))
+        .filter(PagoRenglon.renglon_id == r.id, PagoRenglon.fecha_pago >= inicio, PagoRenglon.fecha_pago <= fin)
+        .scalar()
+    ))
+    return RenglonGastoResponse(
+        id=r.id, nombre=r.nombre, categoria=r.categoria, monto_esperado_usd=r.monto_esperado_usd,
+        frecuencia=r.frecuencia, activo=r.activo, periodo_label=periodo_label,
+        monto_pagado_periodo=pagado, saldo_pendiente_periodo=max(Decimal("0"), r.monto_esperado_usd - pagado),
+    )
+
+@app.post("/api/v1/gastos-fijos/renglones", tags=["Gastos Fijos"], response_model=RenglonGastoResponse, status_code=status.HTTP_201_CREATED)
+def crear_renglon_gasto(
+    datos: RenglonGastoCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+):
+    if not datos.nombre.strip():
+        raise HTTPException(status_code=400, detail="El nombre del renglón es obligatorio.")
+    nuevo = RenglonGasto(
+        empresa_id=usuario_actual.eid,
+        nombre=datos.nombre.strip(),
+        categoria=datos.categoria,
+        monto_esperado_usd=datos.monto_esperado_usd,
+        frecuencia=datos.frecuencia,
+        activo=True,
+    )
+    db.add(nuevo)
+    db.commit()
+    db.refresh(nuevo)
+    return _renglon_a_response(db, nuevo)
+
+@app.get("/api/v1/gastos-fijos/renglones", tags=["Gastos Fijos"], response_model=List[RenglonGastoResponse])
+def listar_renglones_gasto(
+    incluir_inactivos: bool = False,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+):
+    query = db.query(RenglonGasto).filter(RenglonGasto.empresa_id == usuario_actual.eid)
+    if not incluir_inactivos:
+        query = query.filter(RenglonGasto.activo == True)
+    renglones = query.order_by(RenglonGasto.categoria.asc(), RenglonGasto.nombre.asc()).all()
+    return [_renglon_a_response(db, r) for r in renglones]
+
+@app.patch("/api/v1/gastos-fijos/renglones/{renglon_id}", tags=["Gastos Fijos"], response_model=RenglonGastoResponse)
+def actualizar_renglon_gasto(
+    renglon_id: int,
+    datos: RenglonGastoUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+):
+    renglon = db.query(RenglonGasto).filter(RenglonGasto.id == renglon_id, RenglonGasto.empresa_id == usuario_actual.eid).first()
+    if not renglon:
+        raise HTTPException(status_code=404, detail="Renglón de gasto no encontrado.")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(renglon, campo, valor)
+    db.commit()
+    db.refresh(renglon)
+    return _renglon_a_response(db, renglon)
+
+@app.post("/api/v1/gastos-fijos/renglones/{renglon_id}/pagos", tags=["Gastos Fijos"], response_model=PagoRenglonResponse, status_code=status.HTTP_201_CREATED)
+def registrar_pago_renglon(
+    renglon_id: int,
+    datos: PagoRenglonCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+):
+    renglon = db.query(RenglonGasto).filter(RenglonGasto.id == renglon_id, RenglonGasto.empresa_id == usuario_actual.eid).first()
+    if not renglon:
+        raise HTTPException(status_code=404, detail="Renglón de gasto no encontrado.")
+    if datos.monto_usd <= 0:
+        raise HTTPException(status_code=400, detail="El monto del pago debe ser mayor a cero.")
+
+    nuevo_pago = PagoRenglon(
+        empresa_id=usuario_actual.eid,
+        renglon_id=renglon.id,
+        monto_usd=datos.monto_usd,
+        fecha_pago=datos.fecha_pago or datetime.date.today(),
+        comprobante_url=datos.comprobante_url,
+        observaciones=datos.observaciones,
+        registrado_por_id=usuario_actual.usuario_id,
+    )
+    db.add(nuevo_pago)
+    db.commit()
+    db.refresh(nuevo_pago)
+
+    usuario_reg = db.query(Usuario).filter(Usuario.id == usuario_actual.usuario_id).first()
+    return PagoRenglonResponse(
+        id=nuevo_pago.id, renglon_id=renglon.id, renglon_nombre=renglon.nombre,
+        monto_usd=nuevo_pago.monto_usd, fecha_pago=nuevo_pago.fecha_pago,
+        comprobante_url=nuevo_pago.comprobante_url, observaciones=nuevo_pago.observaciones,
+        registrado_por_nombre=usuario_reg.nombre if usuario_reg else None, created_at=nuevo_pago.created_at,
+    )
+
+@app.get("/api/v1/gastos-fijos/pagos", tags=["Gastos Fijos"], response_model=List[PagoRenglonResponse])
+def listar_pagos_renglon(
+    renglon_id: Optional[int] = None,
+    limite: int = 50,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+):
+    query = (
+        db.query(PagoRenglon, RenglonGasto.nombre, Usuario.nombre)
+        .join(RenglonGasto, RenglonGasto.id == PagoRenglon.renglon_id)
+        .outerjoin(Usuario, Usuario.id == PagoRenglon.registrado_por_id)
+        .filter(PagoRenglon.empresa_id == usuario_actual.eid)
+    )
+    if renglon_id:
+        query = query.filter(PagoRenglon.renglon_id == renglon_id)
+    filas = query.order_by(PagoRenglon.fecha_pago.desc(), PagoRenglon.created_at.desc()).limit(limite).all()
+    return [
+        PagoRenglonResponse(
+            id=p.id, renglon_id=p.renglon_id, renglon_nombre=nombre_renglon,
+            monto_usd=p.monto_usd, fecha_pago=p.fecha_pago, comprobante_url=p.comprobante_url,
+            observaciones=p.observaciones, registrado_por_nombre=nombre_usuario, created_at=p.created_at,
+        )
+        for p, nombre_renglon, nombre_usuario in filas
+    ]
+
+
 # --- Módulo de Estadísticas Avanzadas ---
 
 def _calcular_estadisticas(db: Session, empresa_id: int) -> EstadisticasResumenResponse:
@@ -3442,6 +3799,161 @@ def resumen_estadisticas(
     usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
 ):
     return _calcular_estadisticas(db, usuario_actual.eid)
+
+
+# --- Dashboard interactivo: balance por rubro en un rango de fechas, y drill-down por rubro ---
+
+def _calcular_dashboard_avanzado(db: Session, empresa_id: int, desde: datetime.date, hasta: datetime.date) -> DashboardAvanzadoResponse:
+    # Universo de rubros: todas las líneas de productos activos de la empresa,
+    # no solo las que tuvieron ventas en el rango (si no, un rubro sin ventas
+    # hoy desaparece del tablero en vez de mostrarse en $0).
+    lineas_activas = (
+        db.query(Producto.linea)
+        .filter(Producto.empresa_id == empresa_id, Producto.status == True, Producto.linea.isnot(None))
+        .distinct()
+        .all()
+    )
+    lineas = sorted({l.linea for l in lineas_activas if l.linea})
+
+    filtro_ventas = [
+        Ticket.empresa_id == empresa_id,
+        Ticket.status == "procesado",
+        func.date(Ticket.created_at) >= desde,
+        func.date(Ticket.created_at) <= hasta,
+    ]
+    filas_dept = (
+        db.query(
+            Producto.linea,
+            func.sum(Ticket.peso).label("kilos"),
+            func.sum(Ticket.monto_usd).label("monto"),
+        )
+        .join(Ticket, Ticket.producto_id == Producto.id)
+        .filter(*filtro_ventas)
+        .group_by(Producto.linea)
+        .all()
+    )
+    ventas_por_linea = {f.linea: f for f in filas_dept}
+
+    filas_merma = (
+        db.query(Producto.linea, func.sum(Merma.cantidad).label("merma"))
+        .join(Merma, Merma.producto_id == Producto.id)
+        .filter(
+            Merma.empresa_id == empresa_id,
+            func.date(Merma.created_at) >= desde,
+            func.date(Merma.created_at) <= hasta,
+        )
+        .group_by(Producto.linea)
+        .all()
+    )
+    merma_por_linea = {f.linea: Decimal(str(f.merma)) for f in filas_merma}
+
+    deptos = []
+    for linea in lineas:
+        f = ventas_por_linea.get(linea)
+        kilos = Decimal(str(f.kilos)) if f and f.kilos is not None else Decimal("0")
+        monto = Decimal(str(f.monto)) if f and f.monto is not None else Decimal("0")
+        merma = merma_por_linea.get(linea, Decimal("0"))
+        rendimiento = float(((kilos - merma) / kilos) * 100) if kilos > 0 else 0.0
+        deptos.append(MetricaDepartamentoItem(
+            linea=linea, nombre=linea,
+            kilos_despachados=kilos, ventas_usd=monto,
+            merma_kilos=merma, rendimiento=rendimiento, personal_comision=Decimal("0"),
+        ))
+    deptos.sort(key=lambda d: d.ventas_usd, reverse=True)
+
+    return DashboardAvanzadoResponse(desde=desde, hasta=hasta, deptos=deptos, reponer=[], vencer=[])
+
+@app.get("/api/v1/dashboard/avanzado", tags=["Dashboard"], response_model=DashboardAvanzadoResponse)
+def dashboard_avanzado(
+    desde: Optional[datetime.date] = None,
+    hasta: Optional[datetime.date] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+):
+    hoy = datetime.date.today()
+    desde_efectivo = desde or hoy.replace(day=1)
+    hasta_efectivo = hasta or hoy
+    return _calcular_dashboard_avanzado(db, usuario_actual.eid, desde_efectivo, hasta_efectivo)
+
+def _calcular_detalle_rubro(db: Session, empresa_id: int, rubro: str, desde: datetime.date, hasta: datetime.date) -> RubroDetalleResponse:
+    filtro_base = [
+        Ticket.empresa_id == empresa_id,
+        Ticket.status == "procesado",
+        Producto.linea == rubro,
+        func.date(Ticket.created_at) >= desde,
+        func.date(Ticket.created_at) <= hasta,
+    ]
+
+    top_por_monto = (
+        db.query(Producto.id, Producto.nombre, func.sum(Ticket.peso).label("cantidad"), func.sum(Ticket.monto_usd).label("monto"))
+        .join(Ticket, Ticket.producto_id == Producto.id)
+        .filter(*filtro_base)
+        .group_by(Producto.id, Producto.nombre)
+        .order_by(func.sum(Ticket.monto_usd).desc())
+        .limit(10)
+        .all()
+    )
+    top_por_cantidad = (
+        db.query(Producto.id, Producto.nombre, func.sum(Ticket.peso).label("cantidad"), func.sum(Ticket.monto_usd).label("monto"))
+        .join(Ticket, Ticket.producto_id == Producto.id)
+        .filter(*filtro_base)
+        .group_by(Producto.id, Producto.nombre)
+        .order_by(func.sum(Ticket.peso).desc())
+        .limit(10)
+        .all()
+    )
+    mejor_cliente_rows = (
+        db.query(Cliente.id, Cliente.nombre, func.sum(Ticket.monto_usd).label("monto"), func.count(Ticket.id).label("compras"))
+        .join(Ticket, Ticket.cliente_id == Cliente.id)
+        .join(Producto, Producto.id == Ticket.producto_id)
+        .filter(*filtro_base)
+        .group_by(Cliente.id, Cliente.nombre)
+        .order_by(func.sum(Ticket.monto_usd).desc())
+        .limit(5)
+        .all()
+    )
+    totales = (
+        db.query(
+            func.coalesce(func.sum(Ticket.monto_usd), 0).label("monto_total"),
+            func.coalesce(func.sum(Ticket.peso), 0).label("kilos_total"),
+            func.count(Ticket.id).label("tickets_total"),
+        )
+        .join(Producto, Producto.id == Ticket.producto_id)
+        .filter(*filtro_base)
+        .first()
+    )
+
+    return RubroDetalleResponse(
+        rubro=rubro, desde=desde, hasta=hasta,
+        monto_total_usd=Decimal(str(totales.monto_total)),
+        kilos_total=Decimal(str(totales.kilos_total)),
+        tickets_total=totales.tickets_total,
+        top_productos_por_monto=[
+            ProductoTopItem(producto_id=r.id, nombre=r.nombre, cantidad_vendida=Decimal(str(r.cantidad)), monto_usd=Decimal(str(r.monto)))
+            for r in top_por_monto
+        ],
+        top_productos_por_cantidad=[
+            ProductoTopItem(producto_id=r.id, nombre=r.nombre, cantidad_vendida=Decimal(str(r.cantidad)), monto_usd=Decimal(str(r.monto)))
+            for r in top_por_cantidad
+        ],
+        mejores_clientes=[
+            ClienteTopItem(cliente_id=r.id, nombre=r.nombre, monto_usd=Decimal(str(r.monto)), num_compras=r.compras)
+            for r in mejor_cliente_rows
+        ],
+    )
+
+@app.get("/api/v1/dashboard/rubro-detalle", tags=["Dashboard"], response_model=RubroDetalleResponse)
+def dashboard_rubro_detalle(
+    rubro: str,
+    desde: Optional[datetime.date] = None,
+    hasta: Optional[datetime.date] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+):
+    hoy = datetime.date.today()
+    desde_efectivo = desde or hoy.replace(day=1)
+    hasta_efectivo = hasta or hoy
+    return _calcular_detalle_rubro(db, usuario_actual.eid, rubro, desde_efectivo, hasta_efectivo)
 
 
 # --- Agentes de IA: VALE (Analítica), YHORGE (Cobranza y Tesorería), ALO (Ventas y CRM) ---
@@ -3614,17 +4126,7 @@ def agente_yhorge(
         return AgenteRespuesta(agente="YHORGE", respuesta=resultado["respuesta"], fuente="ia")
     return AgenteRespuesta(agente="YHORGE", respuesta=_fallback_yhorge(contexto), fuente="reglas")
 
-@app.post("/api/v1/agentes/alo", tags=["Agentes IA"], response_model=AgenteRespuesta)
-def agente_alo(
-    datos: AloConsulta,
-    db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
-):
-    empresa_id = usuario_actual.eid
-    cliente = db.query(Cliente).filter(Cliente.id == datos.cliente_id, Cliente.empresa_id == empresa_id).first()
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
-
+def _construir_contexto_alo(db: Session, empresa_id: int, cliente: Cliente, item_faltante: Optional[str] = None, pregunta: Optional[str] = None) -> dict:
     tickets = (
         db.query(Ticket, Producto.nombre)
         .join(Producto, Producto.id == Ticket.producto_id)
@@ -3671,21 +4173,189 @@ def agente_alo(
         for o in ordenes
     ]
 
-    contexto = {
+    return {
         "cliente_nombre": cliente.nombre,
         "cliente_telefono": cliente.telefono,
         "historial_compras": historial,
-        "item_faltante": datos.contexto,
+        "item_faltante": item_faltante,
         "saldo_cxc_actual": float(saldo_cxc),
         "visitas_recientes": visitas_recientes,
         "ordenes_recientes": ordenes_recientes,
-        "pregunta_usuario": datos.pregunta,
+        "pregunta_usuario": pregunta,
     }
+
+@app.post("/api/v1/agentes/alo", tags=["Agentes IA"], response_model=AgenteRespuesta)
+def agente_alo(
+    datos: AloConsulta,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    empresa_id = usuario_actual.eid
+    cliente = db.query(Cliente).filter(Cliente.id == datos.cliente_id, Cliente.empresa_id == empresa_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
+
+    contexto = _construir_contexto_alo(db, empresa_id, cliente, item_faltante=datos.contexto, pregunta=datos.pregunta)
 
     resultado = consultar_agente(ALO_SYSTEM_PROMPT, contexto, datos.pregunta)
     if resultado["fuente"] == "ia" and resultado["respuesta"]:
         return AgenteRespuesta(agente="ALO", respuesta=resultado["respuesta"], fuente="ia")
     return AgenteRespuesta(agente="ALO", respuesta=_fallback_alo(contexto), fuente="reglas")
+
+
+# --- Inteligencia CRM: segmentación RFM (sin IA, 100% reglas explicables) + campañas masivas de ALO ---
+
+SEGMENTOS_CRM = ["VIP", "Activo", "En Riesgo", "Inactivo", "Nuevo"]
+
+def _calcular_inteligencia_crm(db: Session, empresa_id: int) -> InteligenciaCRMResponse:
+    hoy = datetime.date.today()
+    hace_90 = hoy - datetime.timedelta(days=90)
+
+    clientes = db.query(Cliente).filter(Cliente.empresa_id == empresa_id).all()
+
+    filas_90d = (
+        db.query(
+            Ticket.cliente_id,
+            func.count(Ticket.id).label("frecuencia"),
+            func.sum(Ticket.monto_usd).label("monto"),
+        )
+        .filter(Ticket.empresa_id == empresa_id, Ticket.status == "procesado", func.date(Ticket.created_at) >= hace_90)
+        .group_by(Ticket.cliente_id)
+        .all()
+    )
+    stats_90d = {f.cliente_id: f for f in filas_90d}
+
+    filas_ultima = (
+        db.query(Ticket.cliente_id, func.max(Ticket.created_at).label("ultima"))
+        .filter(Ticket.empresa_id == empresa_id, Ticket.status == "procesado")
+        .group_by(Ticket.cliente_id)
+        .all()
+    )
+    ultima_compra = {f.cliente_id: f.ultima for f in filas_ultima}
+
+    filas_cxc = (
+        db.query(
+            CuentaPorCobrar.cliente_id,
+            func.sum(CuentaPorCobrar.monto_total - CuentaPorCobrar.monto_abonado).label("saldo"),
+            func.min(CuentaPorCobrar.fecha_vencimiento).label("vencimiento_mas_antiguo"),
+        )
+        .filter(CuentaPorCobrar.empresa_id == empresa_id, CuentaPorCobrar.status != "pagada")
+        .group_by(CuentaPorCobrar.cliente_id)
+        .all()
+    )
+    stats_cxc = {f.cliente_id: f for f in filas_cxc}
+
+    items: List[SegmentoClienteItem] = []
+    resumen = {s: 0 for s in SEGMENTOS_CRM}
+    monto_riesgo = Decimal("0")
+
+    for c in clientes:
+        st90 = stats_90d.get(c.id)
+        frecuencia = st90.frecuencia if st90 else 0
+        monto90 = Decimal(str(st90.monto)) if st90 and st90.monto is not None else Decimal("0")
+
+        ultima = ultima_compra.get(c.id)
+        dias_ultima = (hoy - ultima.date()).days if ultima else None
+        antiguedad = (hoy - c.created_at.date()).days if c.created_at else 9999
+
+        cxc = stats_cxc.get(c.id)
+        saldo_cxc = Decimal(str(cxc.saldo)) if cxc and cxc.saldo is not None else Decimal("0")
+        vencida = bool(cxc and cxc.vencimiento_mas_antiguo and cxc.vencimiento_mas_antiguo < hoy and saldo_cxc > 0)
+
+        if dias_ultima is None:
+            segmento = "Nuevo" if antiguedad <= 30 else "Inactivo"
+        elif dias_ultima <= 30 and frecuencia >= 3:
+            segmento = "VIP"
+        elif dias_ultima <= 45:
+            segmento = "Activo"
+        elif dias_ultima <= 90:
+            segmento = "En Riesgo"
+        else:
+            segmento = "Inactivo"
+
+        if vencida:
+            recomendacion = f"Cobrar saldo vencido de ${saldo_cxc:.2f}"
+        elif segmento == "En Riesgo":
+            recomendacion = f"Reactivar: sin comprar hace {dias_ultima} días"
+        elif segmento == "Inactivo":
+            recomendacion = "Recuperar cliente dormido (nunca compró)" if dias_ultima is None else f"Recuperar: sin comprar hace {dias_ultima} días"
+        elif segmento == "VIP":
+            recomendacion = "Fidelizar: cliente frecuente, considera un beneficio especial"
+        elif segmento == "Nuevo":
+            recomendacion = "Dar seguimiento de bienvenida"
+        else:
+            recomendacion = "Mantener relación habitual"
+
+        resumen[segmento] += 1
+        if segmento == "En Riesgo":
+            monto_riesgo += monto90
+        if vencida:
+            monto_riesgo += saldo_cxc
+
+        items.append(SegmentoClienteItem(
+            cliente_id=c.id, nombre=c.nombre, telefono=c.telefono, segmento=segmento,
+            dias_ultima_compra=dias_ultima, frecuencia_90d=frecuencia, monto_90d=monto90,
+            saldo_cxc=saldo_cxc, saldo_cxc_vencido=vencida, recomendacion=recomendacion,
+        ))
+
+    orden_prioridad = {"En Riesgo": 0, "Inactivo": 1, "VIP": 2, "Nuevo": 3, "Activo": 4}
+    items.sort(key=lambda i: (orden_prioridad.get(i.segmento, 9), -float(i.saldo_cxc)))
+
+    return InteligenciaCRMResponse(clientes=items, resumen_segmentos=resumen, monto_en_riesgo_usd=monto_riesgo)
+
+@app.get("/api/v1/crm/inteligencia", tags=["CRM"], response_model=InteligenciaCRMResponse)
+def inteligencia_crm(
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    return _calcular_inteligencia_crm(db, usuario_actual.eid)
+
+def _fallback_alo_campana(nombre: str, segmento: str, saldo_cxc: float) -> str:
+    if saldo_cxc > 0:
+        return f"Hola {nombre} 👋 te recordamos que tienes un saldo pendiente de ${saldo_cxc:.2f} con nosotros. ¿Coordinamos el pago esta semana?"
+    if segmento in ("En Riesgo", "Inactivo"):
+        return f"Hola {nombre} 👋 te extrañamos por la tienda. Tenemos novedades y buen stock fresco esta semana, ¡pásate a vernos!"
+    if segmento == "VIP":
+        return f"Hola {nombre} 👋 gracias por ser un cliente frecuente. Queremos consentirte con una atención especial en tu próxima visita, ¡te esperamos!"
+    if segmento == "Nuevo":
+        return f"Hola {nombre} 👋 ¡bienvenido/a! Esperamos que tu primera experiencia con nosotros haya sido excelente. Cualquier cosa que necesites, aquí estamos."
+    return f"Hola {nombre} 👋 ¡gracias por ser parte de nuestra clientela! Cuéntanos en qué te podemos ayudar hoy."
+
+@app.post("/api/v1/agentes/alo/campana", tags=["Agentes IA"], response_model=CampanaAloResponse)
+def campana_alo(
+    datos: CampanaAloRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    empresa_id = usuario_actual.eid
+    if datos.segmento not in SEGMENTOS_CRM:
+        raise HTTPException(status_code=400, detail=f"Segmento inválido. Use uno de: {', '.join(SEGMENTOS_CRM)}.")
+
+    inteligencia = _calcular_inteligencia_crm(db, empresa_id)
+    objetivo = [c for c in inteligencia.clientes if c.segmento == datos.segmento]
+    limite = max(1, min(datos.limite, 20))
+    seleccionados = objetivo[:limite]
+
+    generados: List[CampanaAloItem] = []
+    hubo_ia = False
+    for item in seleccionados:
+        cliente = db.query(Cliente).filter(Cliente.id == item.cliente_id, Cliente.empresa_id == empresa_id).first()
+        if not cliente:
+            continue
+        pregunta = f"Redacta un mensaje corto de WhatsApp para este cliente. Motivo interno (no lo menciones tal cual): {item.recomendacion}."
+        contexto = _construir_contexto_alo(db, empresa_id, cliente, pregunta=pregunta)
+        resultado = consultar_agente(ALO_SYSTEM_PROMPT, contexto, pregunta)
+        if resultado["fuente"] == "ia" and resultado["respuesta"]:
+            mensaje = resultado["respuesta"]
+            hubo_ia = True
+        else:
+            mensaje = _fallback_alo_campana(cliente.nombre, item.segmento, float(item.saldo_cxc))
+        generados.append(CampanaAloItem(cliente_id=cliente.id, nombre=cliente.nombre, telefono=cliente.telefono, mensaje=mensaje))
+
+    return CampanaAloResponse(
+        segmento=datos.segmento, fuente="ia" if hubo_ia else "reglas",
+        total_segmento=len(objetivo), generados=generados,
+    )
 
 
 # ==============================================================================
@@ -4124,6 +4794,7 @@ def actualizar_avance_actividad(
         actividad.foto_soporte_url = datos.foto_soporte_url
     if datos.factura_soporte_monto is not None:
         actividad.factura_soporte_monto = datos.factura_soporte_monto
+    actividad.actualizado_en = datetime.datetime.now()
         
     try:
         db.commit()
@@ -4137,6 +4808,71 @@ def actualizar_avance_actividad(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Error al reportar avance: {str(e)}")
+
+# 15. Feed de actividad reciente de la fuerza de ventas (visitas, ordenes, avances de ruta) para el Dashboard
+@app.get("/api/v1/dashboard/actividad-rtc", tags=["Fuerza de Ventas"], response_model=List[ActividadRtcItem])
+def listar_actividad_rtc(
+    horas: int = 24,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(get_current_user)
+):
+    desde = datetime.datetime.now() - datetime.timedelta(hours=horas)
+    eid = usuario_actual.eid
+
+    nombres_vendedores = {
+        u.id: u.nombre for u in db.query(Usuario).filter(Usuario.empresa_id == eid).all()
+    }
+    nombres_clientes = {
+        c.id: c.nombre for c in db.query(Cliente).filter(Cliente.empresa_id == eid).all()
+    }
+
+    items: list[ActividadRtcItem] = []
+
+    visitas_q = db.query(VisitaCliente).filter(
+        VisitaCliente.empresa_id == eid, VisitaCliente.fecha_visita >= desde
+    )
+    if usuario_actual.rol == "vendedor":
+        visitas_q = visitas_q.filter(VisitaCliente.vendedor_id == usuario_actual.usuario_id)
+    for v in visitas_q.all():
+        items.append(ActividadRtcItem(
+            tipo="visita", fecha=v.fecha_visita,
+            vendedor_id=v.vendedor_id, vendedor_nombre=nombres_vendedores.get(v.vendedor_id, "Desconocido"),
+            cliente_id=v.cliente_id, cliente_nombre=nombres_clientes.get(v.cliente_id),
+            descripcion="Visita registrada" + (" con encuesta de marketing" if v.encuesta else ""),
+        ))
+
+    ordenes_q = db.query(OrdenVenta).filter(
+        OrdenVenta.empresa_id == eid, OrdenVenta.created_at >= desde
+    )
+    if usuario_actual.rol == "vendedor":
+        ordenes_q = ordenes_q.filter(OrdenVenta.vendedor_id == usuario_actual.usuario_id)
+    for o in ordenes_q.all():
+        etiqueta = "Presupuesto" if o.tipo == "presupuesto" else "Pedido"
+        items.append(ActividadRtcItem(
+            tipo="orden", fecha=o.created_at,
+            vendedor_id=o.vendedor_id, vendedor_nombre=nombres_vendedores.get(o.vendedor_id, "Desconocido"),
+            cliente_id=o.cliente_id, cliente_nombre=nombres_clientes.get(o.cliente_id),
+            descripcion=f"{etiqueta} por ${o.total_usd}",
+            monto_usd=o.total_usd,
+        ))
+
+    avances_q = (
+        db.query(RutaActividad, RutaVendedor.vendedor_id)
+        .join(RutaVendedor, RutaActividad.ruta_id == RutaVendedor.id)
+        .filter(RutaVendedor.empresa_id == eid, RutaActividad.actualizado_en >= desde)
+    )
+    if usuario_actual.rol == "vendedor":
+        avances_q = avances_q.filter(RutaVendedor.vendedor_id == usuario_actual.usuario_id)
+    for act, vend_id in avances_q.all():
+        items.append(ActividadRtcItem(
+            tipo="avance_ruta", fecha=act.actualizado_en,
+            vendedor_id=vend_id, vendedor_nombre=nombres_vendedores.get(vend_id, "Desconocido"),
+            cliente_id=act.cliente_id, cliente_nombre=nombres_clientes.get(act.cliente_id) if act.cliente_id else None,
+            descripcion=("Avance reportado: " + act.actividad_planificada) if act.ejecutada else ("Actividad marcada pendiente: " + act.actividad_planificada),
+        ))
+
+    items.sort(key=lambda i: i.fecha, reverse=True)
+    return items[:100]
 
 
 # --- Servir el Frontend ya compilado (npm run build -> frontend/dist) ---
