@@ -1,7 +1,13 @@
 import axios from "axios";
 
+// Si VITE_API_URL no está fijado, asume que el backend vive en el mismo host desde el
+// que se cargó el frontend (puerto 8000) — así abrir http://192.168.x.x:5173 desde otro
+// dispositivo en la misma red (ej. una tablet) apunta solo el backend correcto, sin tener
+// que hardcodear la IP del equipo que corre los servidores.
+const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:8000`;
+
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || window.location.origin,
+  baseURL: apiBaseUrl,
 });
 
 apiClient.interceptors.request.use((config) => {
