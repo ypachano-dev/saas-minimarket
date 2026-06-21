@@ -76,14 +76,68 @@ export default function FichaProducto() {
     }
   }
 
+  // Comprimir y redimensionar imagen para optimizar ancho de banda en tabletas y límites de APIs (max 1MB)
+  function comprimirImagen(file: File): Promise<File> {
+    return new Promise((resolve) => {
+      // Si no es imagen, retornar original
+      if (!file.type.startsWith("image/")) {
+        return resolve(file);
+      }
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const MAX_WIDTH = 1000;
+          const MAX_HEIGHT = 1000;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx?.drawImage(img, 0, 0, width, height);
+
+          canvas.toBlob((blob) => {
+            if (blob) {
+              const compressedFile = new File([blob], file.name.split(".")[0] + ".jpg", {
+                type: "image/jpeg",
+                lastModified: Date.now()
+              });
+              resolve(compressedFile);
+            } else {
+              resolve(file);
+            }
+          }, "image/jpeg", 0.7); // 70% calidad
+        };
+      };
+      reader.onerror = () => resolve(file);
+    });
+  }
+
   // Lógica del Escáner de IA Dual (foto frontal + trasera opcional)
   async function escanearArchivos(frontal: File, trasera: File | null) {
     setMsg(null);
     setEscaneando(true);
-    setPasoIA("Conectando con el motor de visión IA...");
+    setPasoIA("Conectando con el motor de visión IA y optimizando imágenes...");
     
     // Simular pasos visuales del motor de IA
     const pasos = [
+      "Comprimiendo y redimensionando fotos para transmisión rápida...",
       "Escaneando empaque frontal (Marca, Nombre y Diseño)...",
       "Procesando cara trasera (Buscando códigos de barra, peso neto)...",
       "Analizando lista de ingredientes y características del fabricante...",
@@ -102,15 +156,18 @@ export default function FichaProducto() {
       }
     }, 450);
 
-    const formData = new FormData();
-    if (frontal) {
-      formData.append("foto_frontal", frontal);
-    }
-    if (trasera) {
-      formData.append("foto_trasera", trasera);
-    }
-
     try {
+      const frontalOpt = await comprimirImagen(frontal);
+      const traseraOpt = trasera ? await comprimirImagen(trasera) : null;
+      
+      const formData = new FormData();
+      if (frontalOpt) {
+        formData.append("foto_frontal", frontalOpt);
+      }
+      if (traseraOpt) {
+        formData.append("foto_trasera", traseraOpt);
+      }
+
       const res = await apiClient.post("/api/v1/productos/analizar-foto", formData, {
         headers: { "Content-Type": "multipart/form-data" }
       });
