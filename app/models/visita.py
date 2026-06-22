@@ -1,5 +1,6 @@
 import datetime
-from sqlalchemy import String, Integer, ForeignKey, DateTime, Float, Text, func
+from decimal import Decimal
+from sqlalchemy import String, Integer, Numeric, Boolean, ForeignKey, DateTime, Float, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
@@ -35,5 +36,24 @@ class EncuestaMarketing(Base):
     comentarios_adicionales: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
-    
+
     visita: Mapped[VisitaCliente] = relationship("VisitaCliente", back_populates="encuesta")
+
+class EncuestaInventarioItem(Base):
+    """Una fila por producto reportado en la encuesta de inventario de una visita.
+    Histórico puro: nunca se actualiza ni sobreescribe, solo se inserta. El stock 'actual'
+    de un cliente para un producto se deriva siempre tomando la fila con MAX(created_at)
+    agrupando por cliente_id+producto_id, jamás de un campo mutable."""
+    __tablename__ = "encuesta_inventario_item"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    visita_id: Mapped[int] = mapped_column(ForeignKey("visita_cliente.id", ondelete="CASCADE"), nullable=False)
+    # Denormalizado a propósito para no tener que JOIN con visita_cliente en cada consulta
+    cliente_id: Mapped[int] = mapped_column(ForeignKey("cliente.id"), nullable=False)
+    producto_id: Mapped[int] = mapped_column(ForeignKey("producto.id"), nullable=False)
+
+    stock_observado: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
+    tiene_queja: Mapped[bool] = mapped_column(Boolean, default=False)
+    detalle_queja: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())

@@ -21,6 +21,23 @@ class CuentaPorCobrar(Base):
 
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
+class PagoCxc(Base):
+    """Histórico de abonos/pagos aplicados a una CuentaPorCobrar. CuentaPorCobrar.monto_abonado
+    sigue siendo el acumulado vigente; esta tabla solo existe para poder mostrar 'pagos recientes'
+    del cliente, dato que antes se perdía porque el abono solo incrementaba un campo mutable."""
+    __tablename__ = "pago_cxc"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    empresa_id: Mapped[int] = mapped_column(ForeignKey("empresa.id", ondelete="CASCADE"), nullable=False)
+    cxc_id: Mapped[int] = mapped_column(ForeignKey("cuenta_por_cobrar.id", ondelete="CASCADE"), nullable=False)
+    cliente_id: Mapped[int] = mapped_column(ForeignKey("cliente.id"), nullable=False)
+
+    monto: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    metodo: Mapped[str] = mapped_column(String(30), default="efectivo")
+    estado: Mapped[str] = mapped_column(String(20), default="confirmado")
+
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
 class CuentaPorPagar(Base):
     """CxP: dinero que la empresa le debe a sus proveedores."""
     __tablename__ = "cuenta_por_pagar"

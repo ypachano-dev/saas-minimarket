@@ -77,8 +77,68 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-export default function FichaProducto() {
-  const [form, setForm] = useState(initial);
+interface ProductoEditar {
+  id: number;
+  codigo_interno: string;
+  codigo_barras?: string | null;
+  nombre: string;
+  marca?: string | null;
+  caracteristicas?: string | null;
+  linea?: string | null;
+  clase_o_tipo?: string | null;
+  tipo_envase?: string | null;
+  peso?: string | number | null;
+  ubicacion?: string | null;
+  tipo_venta: string;
+  factor_merma?: string | number | null;
+  refrigerado: boolean;
+  temperatura_conservacion?: string | null;
+  perecedero: boolean;
+  fecha_elaboracion?: string | null;
+  fecha_ingreso_stock?: string | null;
+  fecha_vencimiento?: string | null;
+  stock_minimo: string | number;
+  costo_usd: string | number;
+  precio_1_detalle: string | number;
+  precio_2_mayorista: string | number;
+  precio_3_especial: string | number;
+  aplica_iva: boolean;
+  foto_url?: string | null;
+}
+
+function productoAForm(p: ProductoEditar): typeof initial {
+  return {
+    codigo_interno: p.codigo_interno,
+    codigo_barras: p.codigo_barras || "",
+    nombre: p.nombre,
+    marca: p.marca || "",
+    caracteristicas: p.caracteristicas || "",
+    linea: p.linea || "",
+    clase_o_tipo: p.clase_o_tipo || "",
+    proveedor: "",
+    tipo_envase: p.tipo_envase || "",
+    peso: p.peso !== null && p.peso !== undefined ? String(p.peso) : "",
+    ubicacion: p.ubicacion || "",
+    tipo_venta: p.tipo_venta || "unidad",
+    factor_merma: p.factor_merma !== null && p.factor_merma !== undefined ? String(p.factor_merma) : "",
+    refrigerado: p.refrigerado,
+    temperatura_conservacion: p.temperatura_conservacion || "ambiente",
+    perecedero: p.perecedero,
+    fecha_elaboracion: p.fecha_elaboracion || "",
+    fecha_ingreso_stock: p.fecha_ingreso_stock || "",
+    fecha_vencimiento: p.fecha_vencimiento || "",
+    stock_minimo: String(p.stock_minimo ?? "0"),
+    costo_usd: String(p.costo_usd ?? ""),
+    precio_1_detalle: String(p.precio_1_detalle ?? ""),
+    precio_2_mayorista: String(p.precio_2_mayorista ?? ""),
+    precio_3_especial: String(p.precio_3_especial ?? ""),
+    aplica_iva: p.aplica_iva,
+    foto_url: p.foto_url || "",
+  };
+}
+
+export default function FichaProducto({ productoEditar, onGuardado, onCancelar }: { productoEditar?: ProductoEditar; onGuardado?: () => void; onCancelar?: () => void } = {}) {
+  const [form, setForm] = useState(productoEditar ? productoAForm(productoEditar) : initial);
   const [dbProveedores, setDbProveedores] = useState<{ id: number; nombre: string }[]>([]);
   const [esProveedorOtro, setEsProveedorOtro] = useState(false);
   const [nuevoProveedorTxt, setNuevoProveedorTxt] = useState("");
@@ -330,35 +390,44 @@ export default function FichaProducto() {
       return;
     }
 
+    const payload = {
+      codigo_interno: form.codigo_interno.trim(),
+      codigo_barras: form.codigo_barras.trim() || null,
+      nombre: form.nombre.trim(),
+      marca: form.marca.trim() || null,
+      caracteristicas: form.caracteristicas.trim() || null,
+      linea: form.linea.trim() || null,
+      clase_o_tipo: form.clase_o_tipo.trim() || null,
+      tipo_envase: form.tipo_envase || null,
+      ubicacion: form.ubicacion.trim() || null,
+      refrigerado: form.temperatura_conservacion !== "ambiente",
+      temperatura_conservacion: form.temperatura_conservacion,
+      perecedero: form.perecedero,
+      fecha_elaboracion: form.fecha_elaboracion || null,
+      fecha_ingreso_stock: form.fecha_ingreso_stock || null,
+      fecha_vencimiento: form.fecha_vencimiento || null,
+      stock_minimo: stockMinimo,
+      costo_usd: costo,
+      precio_1_detalle: precio1,
+      precio_2_mayorista: precio2,
+      precio_3_especial: precio3,
+      aplica_iva: form.aplica_iva,
+      proveedor: form.proveedor || null,
+      peso,
+      foto_url: form.foto_url.trim() || null,
+      tipo_venta: form.tipo_venta,
+      factor_merma: null,
+    };
+
     try {
-      await apiClient.post("/api/v1/productos", {
-        codigo_interno: form.codigo_interno.trim(),
-        codigo_barras: form.codigo_barras.trim() || null,
-        nombre: form.nombre.trim(),
-        marca: form.marca.trim() || null,
-        caracteristicas: form.caracteristicas.trim() || null,
-        linea: form.linea.trim() || null,
-        clase_o_tipo: form.clase_o_tipo.trim() || null,
-        tipo_envase: form.tipo_envase || null,
-        ubicacion: form.ubicacion.trim() || null,
-        refrigerado: form.temperatura_conservacion !== "ambiente",
-        temperatura_conservacion: form.temperatura_conservacion,
-        perecedero: form.perecedero,
-        fecha_elaboracion: form.fecha_elaboracion || null,
-        fecha_ingreso_stock: form.fecha_ingreso_stock || null,
-        fecha_vencimiento: form.fecha_vencimiento || null,
-        stock_minimo: stockMinimo,
-        costo_usd: costo,
-        precio_1_detalle: precio1,
-        precio_2_mayorista: precio2,
-        precio_3_especial: precio3,
-        aplica_iva: form.aplica_iva,
-        proveedor: form.proveedor || null,
-        peso,
-        foto_url: form.foto_url.trim() || null,
-        tipo_venta: form.tipo_venta,
-        factor_merma: null,
-      });
+      if (productoEditar) {
+        await apiClient.put(`/api/v1/productos/${productoEditar.id}`, payload);
+        setMsg({ tipo: "ok", texto: "Ficha del producto actualizada correctamente." });
+        onGuardado?.();
+        return;
+      }
+
+      await apiClient.post("/api/v1/productos", payload);
 
       const nuevoGuardado = {
         codigo_interno: form.codigo_interno.trim(),
@@ -414,8 +483,10 @@ export default function FichaProducto() {
       <div className="rounded-3xl border border-slate-100/80 bg-white p-8 shadow-sm hover:shadow-md transition-all duration-300 space-y-6">
         <div className="flex flex-col gap-4 pb-4 border-b border-slate-100">
           <div>
-            <h2 className="text-3xl font-black tracking-tight text-slate-900">Ficha de Catálogo</h2>
-            <p className="mt-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Ficha técnica extendida con visión artificial dual</p>
+            <h2 className="text-3xl font-black tracking-tight text-slate-900">{productoEditar ? `Editar: ${productoEditar.nombre}` : "Ficha de Catálogo"}</h2>
+            <p className="mt-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+              {productoEditar ? "Modifica cualquier campo de la ficha, incluyendo fotos y precios" : "Ficha técnica extendida con visión artificial dual"}
+            </p>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full mt-2">
@@ -991,9 +1062,20 @@ export default function FichaProducto() {
             </div>
           </section>
 
-          <button type="submit" className="w-full rounded-2xl bg-blue-600 py-3 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:bg-blue-700 hover:shadow-md cursor-pointer">
-            Guardar Ficha en Inventario
-          </button>
+          <div className="flex gap-3">
+            {productoEditar && (
+              <button
+                type="button"
+                onClick={onCancelar}
+                className="flex-1 rounded-2xl bg-slate-100 py-3 text-sm font-bold text-slate-600 transition-all duration-300 hover:bg-slate-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+            )}
+            <button type="submit" className="flex-1 rounded-2xl bg-blue-600 py-3 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:bg-blue-700 hover:shadow-md cursor-pointer">
+              {productoEditar ? "Guardar Cambios" : "Guardar Ficha en Inventario"}
+            </button>
+          </div>
         </form>
       </div>
 

@@ -24,89 +24,134 @@ interface Producto {
   stock_total?: number;
 }
 
+interface EncuestaItemForm {
+  producto: Producto;
+  stock_observado: number;
+  tiene_queja: boolean;
+  detalle_queja: string;
+}
+
+interface StockCeroItem {
+  producto_id: number;
+  codigo: string;
+  nombre: string;
+  stock_observado: number;
+  creado_en: string;
+}
+
+interface FacturaItem {
+  producto_id: number;
+  codigo: string;
+  nombre: string;
+  cantidad: number;
+  precio_unitario: number;
+  total_linea: number;
+}
+
+interface Factura {
+  id: number;
+  numero: string;
+  numero_factura_a2?: string | null;
+  fecha_emision: string;
+  total_usd: number;
+  items: FacturaItem[];
+}
+
+interface RankingItem {
+  producto_id: number;
+  codigo: string;
+  nombre: string;
+  total_cantidad: number;
+  total_monto: number;
+  num_facturas: number;
+}
+
+interface ProyeccionItem {
+  producto_id: number;
+  codigo: string;
+  nombre: string;
+  num_compras: number;
+  cantidad_promedio: number;
+  intervalo_promedio_dias?: number | null;
+  ultima_compra: string;
+  proxima_compra_esperada?: string | null;
+  stock_observado_actual?: number | null;
+  recomendado_reponer_ahora: boolean;
+}
+
+interface PendienteCobro {
+  id: number;
+  numero_doc: string;
+  fecha_vencimiento: string;
+  saldo_usd: number;
+  vencida: boolean;
+}
+
+interface PagoReciente {
+  fecha: string;
+  monto: number;
+  metodo: string;
+  estado: string;
+}
+
+interface HistorialPago {
+  cliente_id: number;
+  pendientes: PendienteCobro[];
+  pagos_recientes: PagoReciente[];
+  requiere_cuestionario_cobranza: boolean;
+}
+
 interface ItemOrden {
   producto: Producto;
   cantidad: number;
   precio_unitario: number;
 }
 
-interface OrdenVentaItem {
-  id: number;
-  producto_id: number;
-  producto_nombre?: string;
-  cantidad: number;
-  precio_unitario: number;
-  monto_usd: number;
-}
-
-interface OrdenVenta {
-  id: number;
-  tipo: string;
-  total_usd: number;
-  estatus: string;
-  notas?: string;
-  created_at: string;
-  items: OrdenVentaItem[];
-}
-
-interface VisitaCliente {
-  id: number;
-  fecha_visita: string;
-  comentarios?: string;
-  lat?: number;
-  lng?: number;
-  foto_visita_url?: string;
-  encuesta?: {
-    inventario_cliente?: string;
-    rotacion_productos?: string;
-    comentarios_adicionales?: string;
-  };
-}
+type TabKey = "encuesta" | "stockCero" | "compra" | "pago" | "presupuesto" | "datos";
 
 export default function ModuloVisitas() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
-  const [clienteSeleccionado, setClienteSeleccionado] = useState<Cliente | null>(null);
   const [productos, setProductos] = useState<Producto[]>([]);
-  const [activeTab, setActiveTab] = useState<"historial" | "orden" | "encuesta" | "editar">("historial");
+  const [clienteSeleccionado, setClienteSeleccionado] = useState<Cliente | null>(null);
+  const [activeTab, setActiveTab] = useState<TabKey>("encuesta");
+  const [loadingCliente, setLoadingCliente] = useState(false);
+  const [loadingAccion, setLoadingAccion] = useState(false);
+  const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
 
-  // Historial de visitas y órdenes del cliente seleccionado
-  const [visitas, setVisitas] = useState<VisitaCliente[]>([]);
-  const [ordenes, setOrdenes] = useState<OrdenVenta[]>([]);
-  // Historial de compras reales (Tickets) y deuda/pagos (Cartera CxC) del cliente
-  const [comprasTickets, setComprasTickets] = useState<any[]>([]);
-  const [cuentasCxc, setCuentasCxc] = useState<any[]>([]);
-  const [cxcDisponible, setCxcDisponible] = useState(true);
+  // Selector de cliente: autocomplete en memoria, sin selects gigantes
+  const [busquedaCliente, setBusquedaCliente] = useState("");
+  const [mostrarDropdownCliente, setMostrarDropdownCliente] = useState(false);
 
-  // GPS real del check-in de la visita (independiente de las coordenadas del cliente)
-  const [latVisitaActual, setLatVisitaActual] = useState<number | undefined>(undefined);
-  const [lngVisitaActual, setLngVisitaActual] = useState<number | undefined>(undefined);
-  const [gpsVisitaError, setGpsVisitaError] = useState("");
+  // Bloques cargados en paralelo al seleccionar cliente
+  const [stockCero, setStockCero] = useState<StockCeroItem[]>([]);
+  const [facturas, setFacturas] = useState<Factura[]>([]);
+  const [ranking, setRanking] = useState<RankingItem[]>([]);
+  const [proyeccion, setProyeccion] = useState<ProyeccionItem[]>([]);
+  const [historialPago, setHistorialPago] = useState<HistorialPago | null>(null);
+  const [facturaExpandida, setFacturaExpandida] = useState<number | null>(null);
 
-  // Formulario de nueva orden (Presupuesto / Backorder)
+  // Encuesta de Inventario (acción principal)
+  const [busquedaProducto, setBusquedaProducto] = useState("");
+  const [itemsEncuesta, setItemsEncuesta] = useState<EncuestaItemForm[]>([]);
+  const [latEncuesta, setLatEncuesta] = useState<number | undefined>(undefined);
+  const [lngEncuesta, setLngEncuesta] = useState<number | undefined>(undefined);
+
+  // Cuestionario de cobranza (se activa por contexto, no por navegación manual)
+  const [respuestaCobranza, setRespuestaCobranza] = useState("");
+  const [gestionEfectiva, setGestionEfectiva] = useState(false);
+
+  // Toma de Presupuesto (cesta)
   const [cesta, setCesta] = useState<ItemOrden[]>([]);
   const [tipoOrden, setTipoOrden] = useState<"presupuesto" | "pedido">("presupuesto");
   const [notasOrden, setNotasOrden] = useState("");
-  const [prodBusqueda, setProdBusqueda] = useState("");
+  const [prodBusquedaCesta, setProdBusquedaCesta] = useState("");
 
-  // Formulario de encuesta de marketing
-  const [inventarioCliente, setInventarioCliente] = useState("");
-  const [rotacionProductos, setRotacionProductos] = useState("");
-  const [comentariosEncuesta, setComentariosEncuesta] = useState("");
-  const [comentariosVisita, setComentariosVisita] = useState("");
-  const [fotoVisita, setFotoVisita] = useState("");
-
-  // Formulario de edición de cliente
+  // Datos del Cliente (edición rápida)
   const [nombreCli, setNombreCli] = useState("");
   const [cedulaCli, setCedulaCli] = useState("");
   const [telefonoCli, setTelefonoCli] = useState("");
   const [emailCli, setEmailCli] = useState("");
   const [direccionCli, setDireccionCli] = useState("");
-  const [latCli, setLatCli] = useState<number | undefined>(undefined);
-  const [lngCli, setLngCli] = useState<number | undefined>(undefined);
-  const [fotoFachadaCli, setFotoFachadaCli] = useState("");
-
-  const [loading, setLoading] = useState(false);
-  const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
 
   useEffect(() => {
     cargarClientes();
@@ -114,12 +159,10 @@ export default function ModuloVisitas() {
   }, []);
 
   // Reporta la posición GPS real del vendedor cada ~20s mientras esta pantalla está abierta,
-  // para que el gerente lo vea en tiempo real en "Agenda y Viáticos" / Dashboard. Antes de este
-  // fix, nada llamaba a este endpoint y el mapa gerencial siempre quedaba vacío.
+  // para que el gerente lo vea en tiempo real en "Agenda y Viáticos" / Dashboard.
   const ultimoEnvioGpsRef = useRef<number>(0);
   useEffect(() => {
     if (!("geolocation" in navigator)) return;
-
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const ahora = Date.now();
@@ -133,31 +176,8 @@ export default function ModuloVisitas() {
       () => {},
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
     );
-
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
-
-  useEffect(() => {
-    if (clienteSeleccionado) {
-      cargarHistorialCliente(clienteSeleccionado.id);
-      // Reset forms
-      setNombreCli(clienteSeleccionado.nombre);
-      setCedulaCli(clienteSeleccionado.cedula);
-      setTelefonoCli(clienteSeleccionado.telefono || "");
-      setEmailCli(clienteSeleccionado.email || "");
-      setDireccionCli(clienteSeleccionado.direccion || "");
-      setLatCli(clienteSeleccionado.lat);
-      setLngCli(clienteSeleccionado.lng);
-      setFotoFachadaCli(clienteSeleccionado.foto_fachada_url || "");
-      setCesta([]);
-      setNotasOrden("");
-      setInventarioCliente("");
-      setRotacionProductos("");
-      setComentariosEncuesta("");
-      setComentariosVisita("");
-      setFotoVisita("");
-    }
-  }, [clienteSeleccionado]);
 
   const cargarClientes = async () => {
     try {
@@ -177,33 +197,154 @@ export default function ModuloVisitas() {
     }
   };
 
-  const cargarHistorialCliente = async (cid: number) => {
-    setLoading(true);
-    const [resVisitas, resOrdenes, resCompras, resCxc] = await Promise.allSettled([
-      apiClient.get<VisitaCliente[]>(`/api/v1/visitas/cliente/${cid}`),
-      apiClient.get<OrdenVenta[]>(`/api/v1/ventas/ordenes/cliente/${cid}`),
-      apiClient.get<any[]>("/api/v1/tickets", { params: { cliente_id: cid, status: "procesado" } }),
-      apiClient.get<any[]>("/api/v1/cartera/cxc", { params: { cliente_id: cid } }),
+  // GPS opcional para la encuesta: nunca bloquea el guardado si el dispositivo lo niega.
+  const capturarGpsEncuesta = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLatEncuesta(pos.coords.latitude);
+        setLngEncuesta(pos.coords.longitude);
+      },
+      () => {
+        setLatEncuesta(undefined);
+        setLngEncuesta(undefined);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const seleccionarCliente = async (cliente: Cliente) => {
+    setClienteSeleccionado(cliente);
+    setBusquedaCliente("");
+    setMostrarDropdownCliente(false);
+    setActiveTab("encuesta");
+    setMensaje(null);
+
+    setItemsEncuesta([]);
+    setBusquedaProducto("");
+    setRespuestaCobranza("");
+    setGestionEfectiva(false);
+    setCesta([]);
+    setNotasOrden("");
+    setNombreCli(cliente.nombre);
+    setCedulaCli(cliente.cedula);
+    setTelefonoCli(cliente.telefono || "");
+    setEmailCli(cliente.email || "");
+    setDireccionCli(cliente.direccion || "");
+    capturarGpsEncuesta();
+
+    await cargarTodoElCliente(cliente.id);
+  };
+
+  // Toda la pantalla carga de una vez: las 5 consultas se disparan en paralelo, el vendedor
+  // no debe esperar a que cada pestaña haga su propio fetch.
+  const cargarTodoElCliente = async (clienteId: number) => {
+    setLoadingCliente(true);
+    const [resStockCero, resCompra, resRanking, resProyeccion, resPago] = await Promise.allSettled([
+      apiClient.get<StockCeroItem[]>(`/api/v1/visita-cliente/clientes/${clienteId}/stock-cero`),
+      apiClient.get<Factura[]>(`/api/v1/visita-cliente/clientes/${clienteId}/historial-compra`),
+      apiClient.get<RankingItem[]>(`/api/v1/visita-cliente/clientes/${clienteId}/ranking-productos`),
+      apiClient.get<ProyeccionItem[]>(`/api/v1/visita-cliente/clientes/${clienteId}/proyeccion-reposicion`),
+      apiClient.get<HistorialPago>(`/api/v1/visita-cliente/clientes/${clienteId}/historial-pago`),
     ]);
 
-    setVisitas(resVisitas.status === "fulfilled" ? resVisitas.value.data : []);
-    setOrdenes(resOrdenes.status === "fulfilled" ? resOrdenes.value.data : []);
-    setComprasTickets(
-      resCompras.status === "fulfilled"
-        ? resCompras.value.data.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        : []
-    );
-
-    if (resCxc.status === "fulfilled") {
-      setCuentasCxc(resCxc.value.data);
-      setCxcDisponible(true);
-    } else {
-      setCuentasCxc([]);
-      setCxcDisponible(false); // probablemente el rol actual (vendedor) no tiene permiso sobre Cartera
-    }
-
-    setLoading(false);
+    setStockCero(resStockCero.status === "fulfilled" ? resStockCero.value.data : []);
+    setFacturas(resCompra.status === "fulfilled" ? resCompra.value.data : []);
+    setRanking(resRanking.status === "fulfilled" ? resRanking.value.data : []);
+    setProyeccion(resProyeccion.status === "fulfilled" ? resProyeccion.value.data : []);
+    setHistorialPago(resPago.status === "fulfilled" ? resPago.value.data : null);
+    setLoadingCliente(false);
   };
+
+  const refrescarStockCero = async () => {
+    if (!clienteSeleccionado) return;
+    try {
+      const res = await apiClient.get<StockCeroItem[]>(`/api/v1/visita-cliente/clientes/${clienteSeleccionado.id}/stock-cero`);
+      setStockCero(res.data);
+    } catch {
+      // No bloqueante: la encuesta ya se guardó, solo falló el refresco de este bloque.
+    }
+  };
+
+  // --- Encuesta de Inventario ---
+
+  const agregarProductoEncuesta = (prod: Producto) => {
+    if (itemsEncuesta.some((i) => i.producto.id === prod.id)) return;
+    setItemsEncuesta([...itemsEncuesta, {
+      producto: prod,
+      stock_observado: prod.stock_total ?? 0,
+      tiene_queja: false,
+      detalle_queja: "",
+    }]);
+    setBusquedaProducto("");
+  };
+
+  const actualizarItemEncuesta = (productoId: number, cambios: Partial<EncuestaItemForm>) => {
+    setItemsEncuesta(itemsEncuesta.map((i) => i.producto.id === productoId ? { ...i, ...cambios } : i));
+  };
+
+  const quitarItemEncuesta = (productoId: number) => {
+    setItemsEncuesta(itemsEncuesta.filter((i) => i.producto.id !== productoId));
+  };
+
+  const guardarEncuesta = async () => {
+    if (!clienteSeleccionado || itemsEncuesta.length === 0) return;
+    setLoadingAccion(true);
+    setMensaje(null);
+    try {
+      await apiClient.post("/api/v1/visita-cliente/encuesta", {
+        cliente_id: clienteSeleccionado.id,
+        items: itemsEncuesta.map((i) => ({
+          producto_id: i.producto.id,
+          stock_observado: i.stock_observado,
+          tiene_queja: i.tiene_queja,
+          detalle_queja: i.tiene_queja ? (i.detalle_queja || null) : null,
+        })),
+        lat: latEncuesta,
+        lng: lngEncuesta,
+      });
+      setMensaje({ tipo: "ok", texto: "Encuesta de inventario guardada con éxito." });
+      setItemsEncuesta([]);
+      refrescarStockCero();
+    } catch (err: any) {
+      setMensaje({ tipo: "error", texto: err.response?.data?.detail || "No se pudo guardar la encuesta." });
+    } finally {
+      setLoadingAccion(false);
+    }
+  };
+
+  const productosFiltrados = productos.filter((p) =>
+    !itemsEncuesta.some((i) => i.producto.id === p.id) &&
+    (p.nombre.toLowerCase().includes(busquedaProducto.toLowerCase()) ||
+      p.codigo_interno.toLowerCase().includes(busquedaProducto.toLowerCase()))
+  ).slice(0, 8);
+
+  // --- Cobranza en contexto ---
+
+  const enviarGestionCobranza = async () => {
+    if (!clienteSeleccionado || !respuestaCobranza.trim()) return;
+    setLoadingAccion(true);
+    setMensaje(null);
+    try {
+      const resGestion = await apiClient.post<{ gestion_id: number }>("/api/v1/cobranzas/gestion-cobranza", {
+        cliente_id: clienteSeleccionado.id,
+        tipo: "VISITA",
+      });
+      await apiClient.put(`/api/v1/cobranzas/gestion-cobranza/${resGestion.data.gestion_id}/respuesta`, {
+        respuesta_cliente: respuestaCobranza,
+        efectiva: gestionEfectiva,
+      });
+      setMensaje({ tipo: "ok", texto: "Gestión de cobranza registrada con éxito." });
+      setRespuestaCobranza("");
+      setGestionEfectiva(false);
+    } catch (err: any) {
+      setMensaje({ tipo: "error", texto: err.response?.data?.detail || "No se pudo registrar la gestión de cobranza." });
+    } finally {
+      setLoadingAccion(false);
+    }
+  };
+
+  // --- Toma de Presupuesto ---
 
   const agregarACesta = (prod: Producto) => {
     const existe = cesta.find((i) => i.producto.id === prod.id);
@@ -214,128 +355,50 @@ export default function ModuloVisitas() {
     }
   };
 
-  const removerDeCesta = (pid: number) => {
-    setCesta(cesta.filter((i) => i.producto.id !== pid));
-  };
+  const removerDeCesta = (pid: number) => setCesta(cesta.filter((i) => i.producto.id !== pid));
 
   const cambiarCantidadCesta = (pid: number, cant: number) => {
     if (cant <= 0) return;
     setCesta(cesta.map((i) => i.producto.id === pid ? { ...i, cantidad: cant } : i));
   };
 
-  const calcularTotalCesta = () => {
-    return cesta.reduce((acc, item) => acc + item.cantidad * item.precio_unitario, 0);
-  };
+  const totalCesta = cesta.reduce((acc, item) => acc + item.cantidad * item.precio_unitario, 0);
 
   const enviarOrden = async () => {
     if (cesta.length === 0 || !clienteSeleccionado) return;
-    setLoading(true);
+    setLoadingAccion(true);
     setMensaje(null);
     try {
-      const itemsPayload = cesta.map((i) => ({
-        producto_id: i.producto.id,
-        cantidad: i.cantidad,
-        precio_unitario: i.precio_unitario
-      }));
-
       await apiClient.post("/api/v1/ventas/ordenes", {
         cliente_id: clienteSeleccionado.id,
         tipo: tipoOrden,
         notas: notasOrden,
-        items: itemsPayload
+        items: cesta.map((i) => ({
+          producto_id: i.producto.id,
+          cantidad: i.cantidad,
+          precio_unitario: i.precio_unitario,
+        })),
       });
-
       setMensaje({ tipo: "ok", texto: `El ${tipoOrden} ha sido enviado con éxito.` });
       setCesta([]);
       setNotasOrden("");
-      cargarHistorialCliente(clienteSeleccionado.id);
-      setActiveTab("historial");
     } catch (err: any) {
       setMensaje({ tipo: "error", texto: err.response?.data?.detail || "No se pudo registrar la orden." });
     } finally {
-      setLoading(false);
+      setLoadingAccion(false);
     }
   };
 
-  const enviarVisitaYEncuesta = async () => {
-    if (!clienteSeleccionado) return;
-    setLoading(true);
-    setMensaje(null);
-    try {
-      const payload = {
-        cliente_id: clienteSeleccionado.id,
-        comentarios: comentariosVisita,
-        // GPS real del check-in (capturado al entrar a esta pestaña); si el navegador lo negó
-        // o no respondió, se envía sin coordenadas en vez de inventar una ubicación falsa.
-        lat: latVisitaActual,
-        lng: lngVisitaActual,
-        foto_visita_url: fotoVisita || "https://img.freepik.com/foto-gratis/almacen-tienda-industrial_1150-13612.jpg",
-        encuesta: (inventarioCliente || rotacionProductos || comentariosEncuesta) ? {
-          inventario_cliente: inventarioCliente,
-          rotacion_productos: rotacionProductos,
-          comentarios_adicionales: comentariosEncuesta
-        } : undefined
-      };
+  const productosFiltradosCesta = productos.filter((p) =>
+    p.nombre.toLowerCase().includes(prodBusquedaCesta.toLowerCase()) ||
+    p.codigo_interno.toLowerCase().includes(prodBusquedaCesta.toLowerCase())
+  ).slice(0, 8);
 
-      await apiClient.post("/api/v1/visitas", payload);
-      setMensaje({ tipo: "ok", texto: "Visita y Encuesta de marketing guardadas con éxito." });
-      setComentariosVisita("");
-      setInventarioCliente("");
-      setRotacionProductos("");
-      setComentariosEncuesta("");
-      cargarHistorialCliente(clienteSeleccionado.id);
-      setActiveTab("historial");
-    } catch {
-      setMensaje({ tipo: "error", texto: "No se pudo registrar la visita." });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Captura la posición GPS real del dispositivo para el check-in de la visita (no la del cliente)
-  const capturarGpsVisita = () => {
-    setGpsVisitaError("");
-    if (!navigator.geolocation) {
-      setGpsVisitaError("Este dispositivo no soporta geolocalización. La visita se guardará sin coordenadas.");
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLatVisitaActual(pos.coords.latitude);
-        setLngVisitaActual(pos.coords.longitude);
-      },
-      () => {
-        setGpsVisitaError("No se pudo obtener tu ubicación (permiso denegado o señal débil). La visita se guardará sin coordenadas de check-in.");
-        setLatVisitaActual(undefined);
-        setLngVisitaActual(undefined);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
-
-  const capturarGpsCheckin = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setLatCli(pos.coords.latitude);
-          setLngCli(pos.coords.longitude);
-          setMensaje({ tipo: "ok", texto: "Coordenadas GPS obtenidas del navegador con éxito." });
-        },
-        () => {
-          // Fallback simulador
-          setLatCli(10.4812);
-          setLngCli(-66.9045);
-          setMensaje({ tipo: "ok", texto: "Permiso GPS denegado. Se asignó ubicación demo en Barinas." });
-        }
-      );
-    } else {
-      setMensaje({ tipo: "error", texto: "Geolocalización no soportada por el navegador." });
-    }
-  };
+  // --- Datos del Cliente ---
 
   const guardarCambiosCliente = async () => {
     if (!clienteSeleccionado) return;
-    setLoading(true);
+    setLoadingAccion(true);
     setMensaje(null);
     try {
       const res = await apiClient.put(`/api/v1/clientes/${clienteSeleccionado.id}`, {
@@ -344,9 +407,6 @@ export default function ModuloVisitas() {
         telefono: telefonoCli,
         email: emailCli,
         direccion: direccionCli,
-        lat: latCli,
-        lng: lngCli,
-        foto_fachada_url: fotoFachadaCli
       });
       setClienteSeleccionado(res.data);
       cargarClientes();
@@ -354,41 +414,65 @@ export default function ModuloVisitas() {
     } catch (err: any) {
       setMensaje({ tipo: "error", texto: err.response?.data?.detail || "No se pudo actualizar la ficha." });
     } finally {
-      setLoading(false);
+      setLoadingAccion(false);
     }
   };
 
-  const filteredProducts = productos.filter((p) =>
-    p.nombre.toLowerCase().includes(prodBusqueda.toLowerCase()) ||
-    p.codigo_interno.toLowerCase().includes(prodBusqueda.toLowerCase())
-  );
+  const resultadosBusquedaCliente = busquedaCliente.trim()
+    ? clientes.filter((c) =>
+        c.nombre.toLowerCase().includes(busquedaCliente.toLowerCase()) ||
+        c.cedula.toLowerCase().includes(busquedaCliente.toLowerCase())
+      ).slice(0, 8)
+    : [];
+
+  const tieneVencidas = !!historialPago?.pendientes.some((p) => p.vencida);
+
+  const TABS: { key: TabKey; icon: string; label: string }[] = [
+    { key: "encuesta", icon: "📋", label: "Encuesta de Inventario" },
+    { key: "stockCero", icon: "🚫", label: "Stock Cero" },
+    { key: "compra", icon: "📈", label: "Historial de Compra" },
+    { key: "pago", icon: "💳", label: "Historial de Pago" },
+    { key: "presupuesto", icon: "🧾", label: "Toma de Presupuesto" },
+    { key: "datos", icon: "🛠️", label: "Datos del Cliente" },
+  ];
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
-          <h2 className="text-3xl font-black tracking-tight text-emerald-950">Visita Clientes (Fuerza de Ventas)</h2>
-          <p className="text-slate-500 text-sm">Navaja suiza para vendedores y representantes de agro-servicio comercial (RTC).</p>
+          <h2 className="text-3xl font-black tracking-tight text-emerald-950">Visita Cliente</h2>
+          <p className="text-slate-500 text-sm">Expediente 360° del cliente en terreno: registra, consulta y cotiza desde una sola pantalla.</p>
         </div>
-        
-        {/* Selector de Cliente */}
-        <div className="w-full md:w-80">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Cliente a Visitar</label>
-          <select
+
+        {/* Selector de Cliente: autocomplete en memoria */}
+        <div className="w-full md:w-80 relative">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Buscar Cliente</label>
+          <input
+            type="text"
             className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-            value={clienteSeleccionado?.id || ""}
+            placeholder="Nombre o código del cliente..."
+            value={clienteSeleccionado && !busquedaCliente ? `${clienteSeleccionado.nombre} (${clienteSeleccionado.cedula})` : busquedaCliente}
             onChange={(e) => {
-              const selected = clientes.find((c) => c.id === Number(e.target.value));
-              setClienteSeleccionado(selected || null);
+              setBusquedaCliente(e.target.value);
+              setMostrarDropdownCliente(true);
+              setClienteSeleccionado(null);
             }}
-          >
-            <option value="">-- Seleccionar Cliente --</option>
-            {clientes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.nombre} ({c.cedula})
-              </option>
-            ))}
-          </select>
+            onFocus={() => setMostrarDropdownCliente(true)}
+          />
+          {mostrarDropdownCliente && resultadosBusquedaCliente.length > 0 && (
+            <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto">
+              {resultadosBusquedaCliente.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-emerald-50 border-b border-slate-50 last:border-0"
+                  onClick={() => seleccionarCliente(c)}
+                >
+                  {c.nombre} <span className="text-slate-400">({c.cedula})</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </header>
 
@@ -400,512 +484,452 @@ export default function ModuloVisitas() {
         </div>
       )}
 
-      {clienteSeleccionado ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {!clienteSeleccionado ? (
+        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-12 text-center text-slate-400 font-semibold text-sm">
+          💡 Busca y selecciona un cliente arriba para comenzar su visita.
+        </div>
+      ) : (
+        <div className="space-y-6">
           {/* Tarjeta de Resumen del Cliente */}
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="bg-emerald-800 p-6 text-white text-center relative">
-                {clienteSeleccionado.foto_fachada_url ? (
-                  <img
-                    src={clienteSeleccionado.foto_fachada_url}
-                    alt="Fachada Cliente"
-                    className="w-24 h-24 rounded-full border-4 border-white/20 mx-auto object-cover object-center shadow-lg shadow-black/20"
-                  />
-                ) : (
-                  <div className="w-24 h-24 rounded-full border-4 border-white/20 mx-auto flex items-center justify-center bg-emerald-900 text-3xl font-bold shadow-lg shadow-black/20">
-                    🏢
-                  </div>
-                )}
-                <h3 className="text-lg font-black mt-3 leading-tight">{clienteSeleccionado.nombre}</h3>
-                <p className="text-xs text-emerald-200/90 font-medium tracking-wide mt-1">{clienteSeleccionado.cedula}</p>
-              </div>
-
-              <div className="p-6 space-y-4 text-xs font-semibold text-slate-700">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-50">
-                  <span className="text-slate-400">Teléfono:</span>
-                  <span>{clienteSeleccionado.telefono || "Sin registrar"}</span>
-                </div>
-                <div className="flex items-center justify-between pb-2 border-b border-slate-50">
-                  <span className="text-slate-400">Email:</span>
-                  <span>{clienteSeleccionado.email || "Sin registrar"}</span>
-                </div>
-                <div className="flex flex-col gap-1 pb-2 border-b border-slate-50">
-                  <span className="text-slate-400">Dirección:</span>
-                  <span className="font-medium text-slate-600 leading-normal">{clienteSeleccionado.direccion || "Sin registrar"}</span>
-                </div>
-                <div className="flex items-center justify-between pb-2 border-b border-slate-50">
-                  <span className="text-slate-400">Ubicación GPS:</span>
-                  <span>
-                    {clienteSeleccionado.lat && clienteSeleccionado.lng 
-                      ? `${clienteSeleccionado.lat.toFixed(4)}, ${clienteSeleccionado.lng.toFixed(4)}`
-                      : "No sincronizado"
-                    }
-                  </span>
-                </div>
-                <div className="flex items-center justify-between pt-2">
-                  <span className="text-slate-400">Límite Crédito:</span>
-                  <span className="text-emerald-700 text-sm font-black">${clienteSeleccionado.limite_credito.toFixed(2)}</span>
-                </div>
+          <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              {clienteSeleccionado.foto_fachada_url ? (
+                <img src={clienteSeleccionado.foto_fachada_url} alt="Fachada" className="w-14 h-14 rounded-full object-cover border-2 border-emerald-100" />
+              ) : (
+                <div className="w-14 h-14 rounded-full bg-emerald-800 text-white flex items-center justify-center text-xl font-bold">🏢</div>
+              )}
+              <div>
+                <h3 className="font-black text-slate-900 text-lg leading-tight">{clienteSeleccionado.nombre}</h3>
+                <p className="text-xs text-slate-400 font-semibold">{clienteSeleccionado.cedula} · {clienteSeleccionado.telefono || "Sin teléfono"}</p>
               </div>
             </div>
-
-            {/* Quick check-in GPS */}
-            <button
-              onClick={capturarGpsCheckin}
-              className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-700/20 transition-all duration-300 transform active:scale-95 text-sm"
-            >
-              📍 Hacer Check-in GPS (Sincronizar Ubicación)
-            </button>
+            <div className="text-right">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Límite de Crédito</p>
+              <p className="text-lg font-black text-emerald-700">${Number(clienteSeleccionado.limite_credito).toFixed(2)}</p>
+            </div>
           </div>
 
-          {/* Menú de Tabs y Modos */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="flex rounded-2xl bg-slate-100 p-1">
+          {/* Tabs horizontales */}
+          <div className="flex flex-wrap rounded-2xl bg-slate-100 p-1 gap-1">
+            {TABS.map((t) => (
               <button
-                className={`flex-1 text-center py-2.5 rounded-xl font-bold text-xs transition-all duration-300 ${activeTab === "historial" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}
-                onClick={() => setActiveTab("historial")}
+                key={t.key}
+                className={`flex-1 min-w-[120px] text-center py-2.5 rounded-xl font-bold text-xs transition-all duration-300 relative ${
+                  activeTab === t.key ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                }`}
+                onClick={() => setActiveTab(t.key)}
               >
-                📜 Historial
-              </button>
-              <button
-                className={`flex-1 text-center py-2.5 rounded-xl font-bold text-xs transition-all duration-300 ${activeTab === "orden" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}
-                onClick={() => setActiveTab("orden")}
-              >
-                🛒 Cesta de Presupuesto/Pedido
-              </button>
-              <button
-                className={`flex-1 text-center py-2.5 rounded-xl font-bold text-xs transition-all duration-300 ${activeTab === "encuesta" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}
-                onClick={() => { setActiveTab("encuesta"); capturarGpsVisita(); }}
-              >
-                📝 Encuesta Marketing
-              </button>
-              <button
-                className={`flex-1 text-center py-2.5 rounded-xl font-bold text-xs transition-all duration-300 ${activeTab === "editar" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}
-                onClick={() => setActiveTab("editar")}
-              >
-                🛠️ Editar Ficha
-              </button>
-            </div>
-
-            {loading ? (
-              <div className="text-center py-12 text-slate-400 font-medium text-sm">Cargando datos del cliente...</div>
-            ) : (
-              <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6">
-                
-                {/* 1. Tab Historial */}
-                {activeTab === "historial" && (
-                  <div className="space-y-6">
-                    <div>
-                      <h4 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Historial de Compras Reales</h4>
-                      {comprasTickets.length === 0 ? (
-                        <p className="text-xs text-slate-400 italic">Sin compras procesadas registradas para este cliente.</p>
-                      ) : (
-                        <div className="divide-y divide-slate-100 max-h-44 overflow-y-auto">
-                          {comprasTickets.slice(0, 15).map((t) => (
-                            <div key={t.id} className="flex justify-between items-center py-2 text-xs">
-                              <span className="text-slate-500">{new Date(t.created_at).toLocaleDateString()}</span>
-                              <span className="font-mono font-bold text-slate-700">${Number(t.monto_usd).toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {cxcDisponible && (
-                      <div className="border-t border-slate-100 pt-6">
-                        <h4 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Cartera (Deuda y Pagos)</h4>
-                        {cuentasCxc.length === 0 ? (
-                          <p className="text-xs text-slate-400 italic">Sin cuentas por cobrar registradas para este cliente.</p>
-                        ) : (
-                          <div className="divide-y divide-slate-100">
-                            {cuentasCxc.map((c) => (
-                              <div key={c.id} className="flex justify-between items-center py-2 text-xs">
-                                <span className="text-slate-500">Vence {new Date(c.fecha_vencimiento).toLocaleDateString()} · {c.status}</span>
-                                <span className={`font-mono font-bold ${c.status === "pagada" ? "text-emerald-600" : "text-rose-600"}`}>${Number(c.saldo).toFixed(2)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="border-t border-slate-100 pt-6">
-                      <h4 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Historial de Órdenes y Cotizaciones</h4>
-                      {ordenes.length === 0 ? (
-                        <p className="text-xs text-slate-400 italic">No hay órdenes registradas por vendedores para este cliente.</p>
-                      ) : (
-                        <div className="space-y-3">
-                          {ordenes.map((o) => (
-                            <div key={o.id} className="border border-slate-100 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-slate-200 transition-all bg-slate-50/50">
-                              <div>
-                                <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full ${o.tipo === "presupuesto" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}>
-                                  {o.tipo}
-                                </span>
-                                <h5 className="font-extrabold text-sm text-slate-900 mt-2">Orden #{o.id}</h5>
-                                <p className="text-[10px] text-slate-400 font-medium mt-1">Generado: {new Date(o.created_at).toLocaleDateString()}</p>
-                                {o.notas && <p className="text-xs text-slate-500 font-medium mt-1">Notas: {o.notas}</p>}
-                                <ul className="mt-2 pl-4 list-disc text-xs text-slate-500 font-medium space-y-1">
-                                  {o.items.map((i, idx) => (
-                                    <li key={idx}>
-                                      {i.producto_nombre || "Producto"}: {i.cantidad} x ${i.precio_unitario.toFixed(2)} = ${i.monto_usd.toFixed(2)}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                              <div className="text-right">
-                                <p className="text-lg font-black text-slate-900">${o.total_usd.toFixed(2)}</p>
-                                <span className={`inline-block mt-2 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                  o.estatus === "pendiente" ? "bg-amber-50 text-amber-700" : o.estatus === "aprobado" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"
-                                }`}>
-                                  {o.estatus}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="border-t border-slate-100 pt-6">
-                      <h4 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Visitas Anteriores</h4>
-                      {visitas.length === 0 ? (
-                        <p className="text-xs text-slate-400 italic">No hay visitas de vendedores registradas.</p>
-                      ) : (
-                        <div className="space-y-3">
-                          {visitas.map((v) => (
-                            <div key={v.id} className="border border-slate-100 rounded-2xl p-4 hover:border-slate-200 transition-all bg-slate-50/50">
-                              <div className="flex justify-between items-center pb-2 border-b border-slate-100 mb-2">
-                                <span className="text-xs font-bold text-slate-500">📅 {new Date(v.fecha_visita).toLocaleString()}</span>
-                                {v.lat && v.lng && (
-                                  <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full">✓ Geolocalizado</span>
-                                )}
-                              </div>
-                              <p className="text-xs text-slate-700 font-medium leading-relaxed">{v.comentarios || "Sin comentarios de avance."}</p>
-                              {v.encuesta && (
-                                <div className="mt-3 bg-emerald-50/30 border border-emerald-100/50 rounded-xl p-3 text-xs space-y-1.5">
-                                  <p className="font-bold text-emerald-950">📋 Encuesta de Marketing:</p>
-                                  <p><span className="text-slate-400 font-semibold">Inventario en Cliente:</span> <span className="font-semibold text-slate-600">{v.encuesta.inventario_cliente || "N/A"}</span></p>
-                                  <p><span className="text-slate-400 font-semibold">Rotación de Productos:</span> <span className="font-semibold text-slate-600">{v.encuesta.rotacion_productos || "N/A"}</span></p>
-                                  {v.encuesta.comentarios_adicionales && (
-                                    <p><span className="text-slate-400 font-semibold">Notas:</span> <span className="font-semibold text-slate-600">{v.encuesta.comentarios_adicionales}</span></p>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                {t.icon} {t.label}
+                {t.key === "pago" && tieneVencidas && (
+                  <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-rose-500 border-2 border-white" />
                 )}
+              </button>
+            ))}
+          </div>
 
-                {/* 2. Tab Nueva Orden / Cesta */}
-                {activeTab === "orden" && (
-                  <div className="space-y-6">
-                    <div className="flex gap-4">
-                      <div className="flex-1">
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Buscar Producto</label>
-                        <input
-                          type="text"
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          placeholder="Código o nombre del producto..."
-                          value={prodBusqueda}
-                          onChange={(e) => setProdBusqueda(e.target.value)}
-                        />
-                      </div>
-                      <div className="w-48">
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tipo de Documento</label>
-                        <select
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                          value={tipoOrden}
-                          onChange={(e) => setTipoOrden(e.target.value as "presupuesto" | "pedido")}
-                        >
-                          <option value="presupuesto">Presupuesto (Cotización)</option>
-                          <option value="pedido">Pedido (Backorder / Venta)</option>
-                        </select>
-                      </div>
+          {loadingCliente ? (
+            <div className="text-center py-12 text-slate-400 font-medium text-sm">Cargando expediente del cliente...</div>
+          ) : (
+            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6">
+
+              {/* 1. Encuesta de Inventario */}
+              {activeTab === "encuesta" && (
+                <div className="space-y-4">
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950">Encuesta de Inventario y Quejas</h4>
+                  <input
+                    type="text"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
+                    placeholder="Buscar producto por código o nombre..."
+                    value={busquedaProducto}
+                    onChange={(e) => setBusquedaProducto(e.target.value)}
+                  />
+                  {busquedaProducto && (
+                    <div className="border border-slate-100 rounded-2xl max-h-40 overflow-y-auto divide-y divide-slate-50 p-2 shadow-inner">
+                      {productosFiltrados.map((p) => (
+                        <div key={p.id} className="flex justify-between items-center py-2 px-3 text-xs font-semibold text-slate-700">
+                          <span>{p.nombre} ({p.codigo_interno})</span>
+                          <button onClick={() => agregarProductoEncuesta(p)} className="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1 rounded-lg font-bold">
+                            + Añadir
+                          </button>
+                        </div>
+                      ))}
+                      {productosFiltrados.length === 0 && <p className="text-xs text-slate-400 italic px-3 py-2">Sin coincidencias.</p>}
                     </div>
+                  )}
 
-                    {/* Catálogo rápido */}
-                    {prodBusqueda && (
-                      <div className="border border-slate-100 rounded-2xl max-h-40 overflow-y-auto divide-y divide-slate-50 p-2 shadow-inner">
-                        {filteredProducts.map((p) => (
-                          <div key={p.id} className="flex justify-between items-center py-2 px-3 text-xs font-semibold text-slate-700">
-                            <span>{p.nombre} ({p.codigo_interno}) - <span className="text-emerald-700">${p.precio_1_detalle.toFixed(2)}</span></span>
-                            <button
-                              onClick={() => agregarACesta(p)}
-                              className="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1 rounded-lg font-bold"
-                            >
-                              + Añadir
-                            </button>
+                  {itemsEncuesta.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic py-6 text-center">Busca productos arriba para registrar el stock visto y quejas.</p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {itemsEncuesta.map((item) => (
+                        <div key={item.producto.id} className="border border-slate-100 rounded-xl p-3 bg-slate-50/30 space-y-2">
+                          <div className="flex justify-between items-center gap-3">
+                            <span className="font-extrabold text-sm text-slate-900 flex-1">{item.producto.nombre}</span>
+                            <label className="text-[10px] font-bold uppercase text-slate-400">Stock visto</label>
+                            <input
+                              type="number"
+                              step="any"
+                              aria-label="Stock visto"
+                              className="w-24 text-center text-xs font-bold border border-slate-200 rounded-lg py-1"
+                              value={item.stock_observado}
+                              onChange={(e) => actualizarItemEncuesta(item.producto.id, { stock_observado: Number(e.target.value) })}
+                            />
+                            <button onClick={() => quitarItemEncuesta(item.producto.id)} className="text-red-500 hover:text-red-700 text-sm font-bold">✕</button>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={item.tiene_queja}
+                              onChange={(e) => actualizarItemEncuesta(item.producto.id, { tiene_queja: e.target.checked })}
+                            />
+                            Tiene queja
+                          </label>
+                          {item.tiene_queja && (
+                            <input
+                              type="text"
+                              className="w-full rounded-lg border border-amber-200 px-3 py-1.5 text-xs bg-amber-50"
+                              placeholder="Detalle de la queja (ej. llegó vencido)..."
+                              value={item.detalle_queja}
+                              onChange={(e) => actualizarItemEncuesta(item.producto.id, { detalle_queja: e.target.value })}
+                            />
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        onClick={guardarEncuesta}
+                        disabled={loadingAccion}
+                        className="w-full mt-2 bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-2.5 rounded-xl shadow-lg shadow-emerald-800/10 transition-all text-xs"
+                      >
+                        {loadingAccion ? "Guardando..." : "Guardar Encuesta"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 2. Stock Cero */}
+              {activeTab === "stockCero" && (
+                <div className="space-y-3">
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950">Productos en Stock Cero (Pendientes a Retomar)</h4>
+                  {stockCero.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic py-6 text-center">Sin productos en cero reportados para este cliente.</p>
+                  ) : (
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-slate-400 uppercase text-[10px] font-bold border-b border-slate-100">
+                          <th className="py-2">Código</th><th>Producto</th><th>Reportado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {stockCero.map((s) => (
+                          <tr key={s.producto_id} className="font-semibold text-slate-700">
+                            <td className="py-2">{s.codigo}</td>
+                            <td>{s.nombre}</td>
+                            <td className="text-slate-400">{new Date(s.creado_en).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+
+              {/* 3. Historial de Compra */}
+              {activeTab === "compra" && (
+                <div className="space-y-8">
+                  <div>
+                    <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950 mb-3">Recomendación de Reposición</h4>
+                    {proyeccion.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic">Sin histórico de compras suficiente para proyectar.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {proyeccion.map((p) => (
+                          <div key={p.producto_id} className={`flex justify-between items-center p-3 rounded-xl text-xs font-semibold ${
+                            p.recomendado_reponer_ahora ? "bg-amber-50 border border-amber-200" : "bg-slate-50 border border-slate-100"
+                          }`}>
+                            <div>
+                              <p className="font-extrabold text-slate-900">{p.nombre} <span className="text-slate-400">({p.codigo})</span></p>
+                              <p className="text-slate-500 mt-0.5">
+                                Compra prom. {Number(p.cantidad_promedio).toFixed(2)} c/{p.intervalo_promedio_dias ? Math.round(p.intervalo_promedio_dias) : "?"} días ·
+                                Última: {new Date(p.ultima_compra).toLocaleDateString()}
+                                {p.proxima_compra_esperada && <> · Próxima esperada: {new Date(p.proxima_compra_esperada).toLocaleDateString()}</>}
+                              </p>
+                            </div>
+                            <div className="text-right shrink-0 ml-3">
+                              <p className="text-slate-400">Stock visto: {p.stock_observado_actual != null ? Number(p.stock_observado_actual).toFixed(2) : "N/D"}</p>
+                              {p.recomendado_reponer_ahora && <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-black uppercase">Reponer ahora</span>}
+                            </div>
                           </div>
                         ))}
                       </div>
                     )}
-
-                    {/* Cesta actual */}
-                    <div>
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Productos en Cesta</h4>
-                      {cesta.length === 0 ? (
-                        <p className="text-xs text-slate-400 italic py-6 text-center">La cesta está vacía. Busca y añade productos arriba.</p>
-                      ) : (
-                        <div className="space-y-2.5">
-                          {cesta.map((item, idx) => (
-                            <div key={idx} className="flex justify-between items-center border border-slate-100 rounded-xl p-3 bg-slate-50/30 text-xs font-semibold text-slate-800">
-                              <div className="flex-1">
-                                <p className="font-extrabold text-slate-900">{item.producto.nombre}</p>
-                                <p className="text-slate-400 text-[10px] mt-0.5">Precio: ${item.producto.precio_1_detalle.toFixed(2)}</p>
-                              </div>
-                              <div className="flex items-center gap-4">
-                                <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white">
-                                  <button
-                                    onClick={() => cambiarCantidadCesta(item.producto.id, item.cantidad - 1)}
-                                    className="px-2 py-1 bg-slate-50 text-slate-500 font-bold hover:bg-slate-100"
-                                  >
-                                    -
-                                  </button>
-                                  <input
-                                    type="number"
-                                    className="w-12 text-center text-xs font-bold border-none focus:outline-none py-1"
-                                    value={item.cantidad}
-                                    onChange={(e) => cambiarCantidadCesta(item.producto.id, Number(e.target.value))}
-                                  />
-                                  <button
-                                    onClick={() => cambiarCantidadCesta(item.producto.id, item.cantidad + 1)}
-                                    className="px-2 py-1 bg-slate-50 text-slate-500 font-bold hover:bg-slate-100"
-                                  >
-                                    +
-                                  </button>
-                                </div>
-                                <span className="w-20 text-right font-black text-slate-900">${(item.cantidad * item.precio_unitario).toFixed(2)}</span>
-                                <button
-                                  onClick={() => removerDeCesta(item.producto.id)}
-                                  className="text-red-500 hover:text-red-700 text-sm font-bold ml-2"
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                          
-                          <div className="flex justify-between items-center pt-4 border-t border-slate-100 font-black text-slate-900">
-                            <span className="text-sm">Total Estimado ({tipoOrden === "pedido" ? "Backorder" : "Cotización"}):</span>
-                            <span className="text-xl text-emerald-800">${calcularTotalCesta().toFixed(2)}</span>
-                          </div>
-
-                          <div className="mt-4">
-                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Notas de la Orden</label>
-                            <textarea
-                              rows={2}
-                              className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                              placeholder="Observaciones de entrega, crédito solicitado..."
-                              value={notasOrden}
-                              onChange={(e) => setNotasOrden(e.target.value)}
-                            />
-                          </div>
-
-                          <button
-                            onClick={enviarOrden}
-                            disabled={cesta.length === 0 || loading}
-                            className="w-full mt-4 bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-2.5 rounded-xl shadow-lg shadow-emerald-800/10 transition-all text-xs"
-                          >
-                            {loading ? "Enviando..." : `Confirmar y Registrar ${tipoOrden === "pedido" ? "Backorder (Pedido)" : "Presupuesto (Cotización)"}`}
-                          </button>
-                        </div>
-                      )}
-                    </div>
                   </div>
-                )}
 
-                {/* 3. Tab Encuesta de Marketing */}
-                {activeTab === "encuesta" && (
-                  <div className="space-y-4">
-                    <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950 mb-1">Encuesta de Rotación y Auditoría en Cliente</h4>
-                    <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-4">Captura datos valiosos de mercado durante tu visita</p>
-                    
-                    <div className="space-y-4">
-                      <label className="flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Comentarios Generales de la Visita (Log)</span>
-                        <textarea
-                          rows={2}
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          placeholder="Resumen de la visita: qué hablaron, necesidades..."
-                          value={comentariosVisita}
-                          onChange={(e) => setComentariosVisita(e.target.value)}
-                          required
-                        />
-                      </label>
+                  <div className="border-t border-slate-100 pt-6">
+                    <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950 mb-3">Ranking de Productos Comprados</h4>
+                    {ranking.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic">Sin compras registradas.</p>
+                    ) : (
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-400 uppercase text-[10px] font-bold border-b border-slate-100">
+                            <th className="py-2">#</th><th>Producto</th><th>Cantidad</th><th>Monto</th><th>N° Facturas</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {ranking.map((r, idx) => (
+                            <tr key={r.producto_id} className="font-semibold text-slate-700">
+                              <td className="py-2">{idx + 1}</td>
+                              <td>{r.nombre} <span className="text-slate-400">({r.codigo})</span></td>
+                              <td>{Number(r.total_cantidad).toFixed(2)}</td>
+                              <td className="font-mono">${Number(r.total_monto).toFixed(2)}</td>
+                              <td>{r.num_facturas}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <label className="flex flex-col">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Inventario del Cliente (Marcas/Cantidades)</span>
-                          <textarea
-                            rows={3}
-                            className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                            placeholder="Ej. Fertilizante NPK: 5 sacos, Insecticida: 10 litros."
-                            value={inventarioCliente}
-                            onChange={(e) => setInventarioCliente(e.target.value)}
-                          />
-                        </label>
-
-                        <label className="flex flex-col">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Rotación observada de nuestros productos</span>
-                          <textarea
-                            rows={3}
-                            className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                            placeholder="Ej. Fertilizantes: lenta rotación, Semillas: rápida rotación."
-                            value={rotacionProductos}
-                            onChange={(e) => setRotacionProductos(e.target.value)}
-                          />
-                        </label>
+                  <div className="border-t border-slate-100 pt-6">
+                    <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950 mb-3">Facturas</h4>
+                    {facturas.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic">Sin facturas registradas para este cliente.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {facturas.map((f) => (
+                          <div key={f.id} className="border border-slate-100 rounded-2xl overflow-hidden">
+                            <button
+                              className="w-full flex justify-between items-center p-3 bg-slate-50/50 hover:bg-slate-100/50 text-xs font-bold"
+                              onClick={() => setFacturaExpandida(facturaExpandida === f.id ? null : f.id)}
+                            >
+                              <span>{f.numero} · {new Date(f.fecha_emision).toLocaleString()}</span>
+                              <span className="font-mono text-slate-900">${Number(f.total_usd).toFixed(2)}</span>
+                            </button>
+                            {facturaExpandida === f.id && (
+                              <div className="p-3 divide-y divide-slate-50 text-xs font-semibold text-slate-600">
+                                {f.items.map((i, idx) => (
+                                  <div key={idx} className="flex justify-between py-1.5">
+                                    <span>{i.nombre} ({i.codigo})</span>
+                                    <span>{Number(i.cantidad).toFixed(2)} x ${Number(i.precio_unitario).toFixed(2)} = ${Number(i.total_linea).toFixed(2)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
                       </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
-                      <label className="flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Comentarios Adicionales y Competencia</span>
-                        <textarea
-                          rows={2}
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          placeholder="Ej. Presencia de la marca Competidora X con precios 10% más bajos."
-                          value={comentariosEncuesta}
-                          onChange={(e) => setComentariosEncuesta(e.target.value)}
-                        />
+              {/* 4. Historial de Pago */}
+              {activeTab === "pago" && (
+                <div className="space-y-6">
+                  {historialPago?.requiere_cuestionario_cobranza && (
+                    <div className="border-2 border-amber-300 bg-amber-50 rounded-2xl p-4 space-y-3">
+                      <p className="text-xs font-black uppercase text-amber-800">⚠️ Cliente con saldo vencido — Gestión de Cobranza</p>
+                      <textarea
+                        rows={2}
+                        className="w-full rounded-xl border border-amber-200 px-3 py-2 text-sm bg-white"
+                        placeholder="¿Qué respondió el cliente sobre su deuda?"
+                        value={respuestaCobranza}
+                        onChange={(e) => setRespuestaCobranza(e.target.value)}
+                      />
+                      <label className="flex items-center gap-2 text-xs font-semibold text-amber-800">
+                        <input type="checkbox" checked={gestionEfectiva} onChange={(e) => setGestionEfectiva(e.target.checked)} />
+                        Gestión efectiva
                       </label>
-
-                      <label className="flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Foto Soporte de la Visita (URL Simulada)</span>
-                        <input
-                          type="text"
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          placeholder="Dirección url de la imagen (dejar en blanco para usar demo)"
-                          value={fotoVisita}
-                          onChange={(e) => setFotoVisita(e.target.value)}
-                        />
-                      </label>
-
-                      <div className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-[11px] font-semibold ${
-                        gpsVisitaError ? "bg-amber-50 text-amber-700" : latVisitaActual ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-500"
-                      }`}>
-                        <span>
-                          {gpsVisitaError
-                            ? `⚠️ ${gpsVisitaError}`
-                            : latVisitaActual
-                            ? `✓ Check-in geolocalizado (${latVisitaActual.toFixed(4)}, ${lngVisitaActual?.toFixed(4)})`
-                            : "📡 Obteniendo tu ubicación GPS para el check-in..."}
-                        </span>
-                        <button type="button" onClick={capturarGpsVisita} className="underline shrink-0">Reintentar</button>
-                      </div>
-
                       <button
-                        onClick={enviarVisitaYEncuesta}
-                        disabled={!comentariosVisita.trim() || loading}
-                        className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-2.5 rounded-xl shadow-lg shadow-emerald-800/10 transition-all text-xs"
+                        onClick={enviarGestionCobranza}
+                        disabled={!respuestaCobranza.trim() || loadingAccion}
+                        className="w-full bg-amber-700 hover:bg-amber-800 text-white font-bold py-2 rounded-xl text-xs"
                       >
-                        {loading ? "Guardando..." : "Registrar Visita y Encuesta de Marketing"}
+                        {loadingAccion ? "Guardando..." : "Registrar Gestión de Cobranza"}
                       </button>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* 4. Tab Editar Ficha Cliente */}
-                {activeTab === "editar" && (
-                  <div className="space-y-4">
-                    <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950 mb-3">Editar Información General de Cliente</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <label className="flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Nombre / Razón Social</span>
-                        <input
-                          type="text"
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          value={nombreCli}
-                          onChange={(e) => setNombreCli(e.target.value)}
-                        />
-                      </label>
-                      <label className="flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Cédula / RIF</span>
-                        <input
-                          type="text"
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          value={cedulaCli}
-                          onChange={(e) => setCedulaCli(e.target.value)}
-                        />
-                      </label>
-                      <label className="flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Teléfono</span>
-                        <input
-                          type="text"
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          value={telefonoCli}
-                          onChange={(e) => setTelefonoCli(e.target.value)}
-                        />
-                      </label>
-                      <label className="flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Email</span>
-                        <input
-                          type="email"
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          value={emailCli}
-                          onChange={(e) => setEmailCli(e.target.value)}
-                        />
-                      </label>
-                      <label className="col-span-1 md:col-span-2 flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Dirección</span>
-                        <textarea
-                          rows={2}
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          value={direccionCli}
-                          onChange={(e) => setDireccionCli(e.target.value)}
-                        />
-                      </label>
-                      <label className="flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Latitud</span>
-                        <input
-                          type="number"
-                          step="any"
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          value={latCli || ""}
-                          onChange={(e) => setLatCli(e.target.value ? Number(e.target.value) : undefined)}
-                        />
-                      </label>
-                      <label className="flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Longitud</span>
-                        <input
-                          type="number"
-                          step="any"
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          value={lngCli || ""}
-                          onChange={(e) => setLngCli(e.target.value ? Number(e.target.value) : undefined)}
-                        />
-                      </label>
-                      <label className="col-span-1 md:col-span-2 flex flex-col">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Foto de Fachada (URL)</span>
-                        <input
-                          type="text"
-                          className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                          value={fotoFachadaCli}
-                          onChange={(e) => setFotoFachadaCli(e.target.value)}
-                          placeholder="URL de la foto de la fachada del local"
-                        />
-                      </label>
+                  <div>
+                    <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950 mb-3">Saldo Pendiente</h4>
+                    {!historialPago || historialPago.pendientes.length === 0 ? (
+                      <p className="text-xs text-emerald-700 font-semibold py-3">✓ Sin saldo pendiente.</p>
+                    ) : (
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-400 uppercase text-[10px] font-bold border-b border-slate-100">
+                            <th className="py-2">Documento</th><th>Vencimiento</th><th>Saldo</th><th>Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {historialPago.pendientes.map((p) => (
+                            <tr key={p.id} className="font-semibold text-slate-700">
+                              <td className="py-2">{p.numero_doc}</td>
+                              <td>{new Date(p.fecha_vencimiento).toLocaleDateString()}</td>
+                              <td className="font-mono">${Number(p.saldo_usd).toFixed(2)}</td>
+                              <td>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${p.vencida ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>
+                                  {p.vencida ? "Vencida" : "Vigente"}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
+                  <div className="border-t border-slate-100 pt-6">
+                    <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950 mb-3">Pagos Recientes</h4>
+                    {!historialPago || historialPago.pagos_recientes.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic">Sin pagos registrados.</p>
+                    ) : (
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-400 uppercase text-[10px] font-bold border-b border-slate-100">
+                            <th className="py-2">Fecha</th><th>Monto</th><th>Método</th><th>Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {historialPago.pagos_recientes.map((p, idx) => (
+                            <tr key={idx} className="font-semibold text-slate-700">
+                              <td className="py-2">{new Date(p.fecha).toLocaleDateString()}</td>
+                              <td className="font-mono">${Number(p.monto).toFixed(2)}</td>
+                              <td>{p.metodo}</td>
+                              <td>{p.estado}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 5. Toma de Presupuesto */}
+              {activeTab === "presupuesto" && (
+                <div className="space-y-6">
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Buscar Producto</label>
+                      <input
+                        type="text"
+                        className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50"
+                        placeholder="Código o nombre del producto..."
+                        value={prodBusquedaCesta}
+                        onChange={(e) => setProdBusquedaCesta(e.target.value)}
+                      />
                     </div>
-
-                    <button
-                      onClick={guardarCambiosCliente}
-                      disabled={loading}
-                      className="w-full mt-4 bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-2.5 rounded-xl shadow-lg shadow-emerald-800/10 transition-all text-xs"
-                    >
-                      {loading ? "Guardando..." : "Guardar Cambios en la Ficha del Cliente"}
-                    </button>
+                    <div className="w-48">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400" htmlFor="tipo-orden-select">Tipo de Documento</label>
+                      <select
+                        id="tipo-orden-select"
+                        className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white"
+                        value={tipoOrden}
+                        onChange={(e) => setTipoOrden(e.target.value as "presupuesto" | "pedido")}
+                      >
+                        <option value="presupuesto">Presupuesto (Cotización)</option>
+                        <option value="pedido">Pedido (Backorder / Venta)</option>
+                      </select>
+                    </div>
                   </div>
-                )}
 
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-12 text-center text-slate-400 font-semibold text-sm">
-          💡 Por favor, selecciona un cliente en la parte superior derecha para comenzar su visita y ver su historial de compra/pagos.
+                  {prodBusquedaCesta && (
+                    <div className="border border-slate-100 rounded-2xl max-h-40 overflow-y-auto divide-y divide-slate-50 p-2 shadow-inner">
+                      {productosFiltradosCesta.map((p) => (
+                        <div key={p.id} className="flex justify-between items-center py-2 px-3 text-xs font-semibold text-slate-700">
+                          <span>{p.nombre} ({p.codigo_interno}) - <span className="text-emerald-700">${Number(p.precio_1_detalle).toFixed(2)}</span></span>
+                          <button onClick={() => agregarACesta(p)} className="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1 rounded-lg font-bold">+ Añadir</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {cesta.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic py-6 text-center">La cesta está vacía. Busca y añade productos arriba.</p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {cesta.map((item) => (
+                        <div key={item.producto.id} className="flex justify-between items-center border border-slate-100 rounded-xl p-3 bg-slate-50/30 text-xs font-semibold text-slate-800">
+                          <div className="flex-1">
+                            <p className="font-extrabold text-slate-900">{item.producto.nombre}</p>
+                            <p className="text-slate-400 text-[10px] mt-0.5">Precio: ${Number(item.producto.precio_1_detalle).toFixed(2)}</p>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <input
+                              type="number"
+                              aria-label="Cantidad"
+                              className="w-16 text-center text-xs font-bold border border-slate-200 rounded-lg py-1"
+                              value={item.cantidad}
+                              onChange={(e) => cambiarCantidadCesta(item.producto.id, Number(e.target.value))}
+                            />
+                            <span className="w-20 text-right font-black text-slate-900">${(item.cantidad * item.precio_unitario).toFixed(2)}</span>
+                            <button onClick={() => removerDeCesta(item.producto.id)} className="text-red-500 hover:text-red-700 text-sm font-bold">✕</button>
+                          </div>
+                        </div>
+                      ))}
+                      <div className="flex justify-between items-center pt-4 border-t border-slate-100 font-black text-slate-900">
+                        <span className="text-sm">Total Estimado:</span>
+                        <span className="text-xl text-emerald-800">${totalCesta.toFixed(2)}</span>
+                      </div>
+                      <textarea
+                        rows={2}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50"
+                        placeholder="Observaciones de entrega, crédito solicitado..."
+                        value={notasOrden}
+                        onChange={(e) => setNotasOrden(e.target.value)}
+                      />
+                      <button
+                        onClick={enviarOrden}
+                        disabled={cesta.length === 0 || loadingAccion}
+                        className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-2.5 rounded-xl text-xs"
+                      >
+                        {loadingAccion ? "Enviando..." : `Confirmar y Registrar ${tipoOrden === "pedido" ? "Pedido" : "Presupuesto"}`}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 6. Datos del Cliente */}
+              {activeTab === "datos" && (
+                <div className="space-y-4">
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-emerald-950 mb-3">Editar Información del Cliente</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="flex flex-col">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Nombre / Razón Social</span>
+                      <input type="text" className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50" value={nombreCli} onChange={(e) => setNombreCli(e.target.value)} />
+                    </label>
+                    <label className="flex flex-col">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Cédula / RIF</span>
+                      <input type="text" className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50" value={cedulaCli} onChange={(e) => setCedulaCli(e.target.value)} />
+                    </label>
+                    <label className="flex flex-col">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Teléfono</span>
+                      <input type="text" className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50" value={telefonoCli} onChange={(e) => setTelefonoCli(e.target.value)} />
+                    </label>
+                    <label className="flex flex-col">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Email</span>
+                      <input type="email" className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50" value={emailCli} onChange={(e) => setEmailCli(e.target.value)} />
+                    </label>
+                    <label className="col-span-1 md:col-span-2 flex flex-col">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Dirección</span>
+                      <textarea rows={2} className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50" value={direccionCli} onChange={(e) => setDireccionCli(e.target.value)} />
+                    </label>
+                  </div>
+                  <button
+                    onClick={guardarCambiosCliente}
+                    disabled={loadingAccion}
+                    className="w-full mt-2 bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-2.5 rounded-xl text-xs"
+                  >
+                    {loadingAccion ? "Guardando..." : "Guardar Cambios"}
+                  </button>
+                </div>
+              )}
+
+            </div>
+          )}
         </div>
       )}
     </div>

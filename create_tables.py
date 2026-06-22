@@ -20,11 +20,12 @@ from app.models.vehiculo import Vehiculo
 from app.models.pedido_delivery import PedidoDelivery
 from app.models.orden_compra import OrdenCompra, OrdenCompraItem
 from app.models.tesoreria import CuentaTesoreria, MovimientoTesoreria
-from app.models.cartera import CuentaPorCobrar, CuentaPorPagar
+from app.models.cartera import CuentaPorCobrar, CuentaPorPagar, PagoCxc
+from app.models.cobranza import GestionCobranza
 from app.models.desposte import Desposte, DesposteItem, DesposteSolicitud
 from app.models.recepcion import RecepcionMercancia, RecepcionMercanciaItem
 from app.models.auditoria import AuditoriaInventario, AuditoriaInventarioItem
-from app.models.visita import VisitaCliente, EncuestaMarketing
+from app.models.visita import VisitaCliente, EncuestaMarketing, EncuestaInventarioItem
 from app.models.orden_venta import OrdenVenta, OrdenVentaItem
 from app.models.ruta import RutaVendedor, RutaActividad
 from app.models.renglon_gasto import RenglonGasto, PagoRenglon

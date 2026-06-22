@@ -320,6 +320,13 @@ class ProveedorCreate(BaseModel):
     email: Optional[str] = None
     direccion: Optional[str] = None
 
+class ProveedorUpdate(BaseModel):
+    rif: Optional[str] = None
+    nombre: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    direccion: Optional[str] = None
+
 class ProveedorResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -337,6 +344,13 @@ class VehiculoCreate(BaseModel):
     modelo: str
     tipo: str # Moto, Carro, Camión
     status: str = "Operativo" # Operativo, Mantenimiento, Inactivo
+
+class VehiculoUpdate(BaseModel):
+    placa: Optional[str] = None
+    marca: Optional[str] = None
+    modelo: Optional[str] = None
+    tipo: Optional[str] = None
+    status: Optional[str] = None
 
 class VehiculoResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -363,6 +377,13 @@ class UsuarioCreate(BaseModel):
     password: str
     rol: str
     status: bool = True
+
+class UsuarioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    rol: Optional[str] = None
+    status: Optional[bool] = None
 
 class UsuarioResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -933,6 +954,100 @@ class VisitaClienteResponse(BaseModel):
     foto_visita_url: Optional[str] = None
     encuesta: Optional[EncuestaMarketingResponse] = None
     created_at: datetime.datetime
+
+# --- Visita Cliente: Encuesta de Inventario estructurada por producto ---
+
+class EncuestaInventarioItemCreate(BaseModel):
+    producto_id: int
+    stock_observado: Decimal
+    tiene_queja: bool = False
+    detalle_queja: Optional[str] = None
+
+class EncuestaInventarioCreate(BaseModel):
+    cliente_id: int
+    items: List[EncuestaInventarioItemCreate]
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+class EncuestaInventarioSaveResponse(BaseModel):
+    status: str
+    visita_id: int
+    items_guardados: int
+
+class StockCeroItem(BaseModel):
+    producto_id: int
+    codigo: str
+    nombre: str
+    stock_observado: Decimal
+    creado_en: datetime.datetime
+
+class FacturaItemResponse(BaseModel):
+    producto_id: int
+    codigo: str
+    nombre: str
+    cantidad: Decimal
+    precio_unitario: Decimal
+    total_linea: Decimal
+
+class FacturaResponse(BaseModel):
+    id: int
+    numero: str
+    numero_factura_a2: Optional[str] = None
+    fecha_emision: datetime.datetime
+    total_usd: Decimal
+    items: List[FacturaItemResponse]
+
+class RankingProductoItem(BaseModel):
+    producto_id: int
+    codigo: str
+    nombre: str
+    total_cantidad: Decimal
+    total_monto: Decimal
+    num_facturas: int
+
+class ProyeccionReposicionItem(BaseModel):
+    producto_id: int
+    codigo: str
+    nombre: str
+    num_compras: int
+    cantidad_promedio: Decimal
+    intervalo_promedio_dias: Optional[float] = None
+    ultima_compra: datetime.datetime
+    proxima_compra_esperada: Optional[datetime.date] = None
+    stock_observado_actual: Optional[Decimal] = None
+    recomendado_reponer_ahora: bool
+
+class PendienteCobroItem(BaseModel):
+    id: int
+    numero_doc: str
+    fecha_vencimiento: datetime.date
+    saldo_usd: Decimal
+    vencida: bool
+
+class PagoRecienteItem(BaseModel):
+    fecha: datetime.datetime
+    monto: Decimal
+    metodo: str
+    estado: str
+
+class HistorialPagoResponse(BaseModel):
+    cliente_id: int
+    pendientes: List[PendienteCobroItem]
+    pagos_recientes: List[PagoRecienteItem]
+    requiere_cuestionario_cobranza: bool
+
+class GestionCobranzaCreate(BaseModel):
+    cliente_id: int
+    tipo: str = "VISITA"
+    fecha_programada: Optional[datetime.datetime] = None
+
+class GestionCobranzaSaveResponse(BaseModel):
+    status: str
+    gestion_id: int
+
+class GestionCobranzaRespuestaUpdate(BaseModel):
+    respuesta_cliente: str
+    efectiva: bool
 
 class OrdenVentaItemCreate(BaseModel):
     producto_id: int

@@ -30,11 +30,12 @@ from app.models.vehiculo import Vehiculo
 from app.models.pedido_delivery import PedidoDelivery
 from app.models.orden_compra import OrdenCompra, OrdenCompraItem
 from app.models.tesoreria import CuentaTesoreria, MovimientoTesoreria, BANCOS_VALIDOS
-from app.models.cartera import CuentaPorCobrar, CuentaPorPagar
+from app.models.cartera import CuentaPorCobrar, CuentaPorPagar, PagoCxc
+from app.models.cobranza import GestionCobranza
 from app.models.desposte import Desposte, DesposteItem, DesposteSolicitud
 from app.models.recepcion import RecepcionMercancia, RecepcionMercanciaItem
 from app.models.auditoria import AuditoriaInventario, AuditoriaInventarioItem
-from app.models.visita import VisitaCliente, EncuestaMarketing
+from app.models.visita import VisitaCliente, EncuestaMarketing, EncuestaInventarioItem
 from app.models.orden_venta import OrdenVenta, OrdenVentaItem
 from app.models.ruta import RutaVendedor, RutaActividad
 from app.models.renglon_gasto import RenglonGasto, PagoRenglon
@@ -48,8 +49,8 @@ from app.schemas import (
     StockBajoItem, LoteCriticoItem, VentasHoyResponse, ResumenMermasResponse, DashboardResponse,
     PeticionFaltanteCreate, PeticionFaltanteResponse, SeguimientoBotResponse,
     SeguimientoBotCreate, SeguimientoBotUpdate,
-    ProveedorCreate, ProveedorResponse, VehiculoCreate, VehiculoResponse, VehiculoUbicacionUpdate,
-    UsuarioCreate, UsuarioResponse, TicketPesajeCreate, TicketPesoUpdate, ProcesarPagoTickets,
+    ProveedorCreate, ProveedorUpdate, ProveedorResponse, VehiculoCreate, VehiculoUpdate, VehiculoResponse, VehiculoUbicacionUpdate,
+    UsuarioCreate, UsuarioUpdate, UsuarioResponse, TicketPesajeCreate, TicketPesoUpdate, ProcesarPagoTickets,
     PedidoDeliveryCreate, PedidoDeliveryResponse, PedidoDeliveryEstadoUpdate, OrdenCompraCreate, OrdenCompraResponse,
     CuentaTesoreriaCreate, CuentaTesoreriaResponse, MovimientoTesoreriaCreate, MovimientoTesoreriaResponse,
     SaldoPorCuentaItem, ResumenTesoreriaResponse,
@@ -66,6 +67,10 @@ from app.schemas import (
     StockProyectadoItem,
     UsuarioGpsUpdate, VendedorUbicacionResponse,
     VisitaClienteCreate, VisitaClienteResponse,
+    EncuestaInventarioCreate, EncuestaInventarioSaveResponse, StockCeroItem,
+    FacturaResponse, FacturaItemResponse, RankingProductoItem, ProyeccionReposicionItem,
+    HistorialPagoResponse, PendienteCobroItem, PagoRecienteItem,
+    GestionCobranzaCreate, GestionCobranzaSaveResponse, GestionCobranzaRespuestaUpdate,
     OrdenVentaCreate, OrdenVentaResponse,
     RutaVendedorCreate, RutaVendedorResponse, RutaEstadoUpdate, ActividadAvanceUpdate, RutaActividadResponse,
     ActividadRtcItem,
@@ -1879,6 +1884,42 @@ def listar_proveedores(
 ):
     return db.query(Proveedor).filter(Proveedor.empresa_id == usuario_actual.eid).all()
 
+# 21b. Editar Proveedor (Aislamiento Multi-Tenant)
+@app.put("/api/v1/proveedores/{proveedor_id}", tags=["Proveedores"], response_model=ProveedorResponse)
+def actualizar_proveedor(
+    proveedor_id: int,
+    datos: ProveedorUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    proveedor = db.query(Proveedor).filter(
+        Proveedor.id == proveedor_id, Proveedor.empresa_id == usuario_actual.eid
+    ).first()
+    if not proveedor:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado.")
+
+    datos_actualizados = datos.model_dump(exclude_unset=True)
+    nuevo_rif = datos_actualizados.get("rif")
+    if nuevo_rif and nuevo_rif.strip() != proveedor.rif:
+        duplicado = db.query(Proveedor).filter(
+            Proveedor.empresa_id == usuario_actual.eid,
+            Proveedor.rif == nuevo_rif.strip(),
+            Proveedor.id != proveedor_id
+        ).first()
+        if duplicado:
+            raise HTTPException(status_code=400, detail="Ya existe otro proveedor con ese RIF en su empresa.")
+
+    for campo, valor in datos_actualizados.items():
+        setattr(proveedor, campo, valor.strip() if isinstance(valor, str) else valor)
+
+    try:
+        db.commit()
+        db.refresh(proveedor)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Error al actualizar el proveedor: {str(e)}")
+    return proveedor
+
 # 22. Crear Vehículo (Aislamiento Multi-Tenant)
 @app.post("/api/v1/vehiculos", tags=["Vehículos"], response_model=VehiculoResponse, status_code=status.HTTP_201_CREATED)
 def crear_vehiculo(
@@ -1917,6 +1958,43 @@ def listar_vehiculos(
     usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
 ):
     return db.query(Vehiculo).filter(Vehiculo.empresa_id == usuario_actual.eid).all()
+
+# 23a. Editar Vehículo (ficha completa: placa, marca, modelo, tipo, status; no confundir
+#      con /ubicacion, que solo recibe el GPS en vivo reportado por la app del repartidor)
+@app.put("/api/v1/vehiculos/{vehiculo_id}", tags=["Vehículos"], response_model=VehiculoResponse)
+def actualizar_vehiculo(
+    vehiculo_id: int,
+    datos: VehiculoUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    vehiculo = db.query(Vehiculo).filter(
+        Vehiculo.id == vehiculo_id, Vehiculo.empresa_id == usuario_actual.eid
+    ).first()
+    if not vehiculo:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado o no pertenece a su empresa.")
+
+    datos_actualizados = datos.model_dump(exclude_unset=True)
+    nueva_placa = datos_actualizados.get("placa")
+    if nueva_placa and nueva_placa.strip() != vehiculo.placa:
+        duplicado = db.query(Vehiculo).filter(
+            Vehiculo.empresa_id == usuario_actual.eid,
+            Vehiculo.placa == nueva_placa.strip(),
+            Vehiculo.id != vehiculo_id
+        ).first()
+        if duplicado:
+            raise HTTPException(status_code=400, detail="Ya existe otro vehículo con esa placa en su empresa.")
+
+    for campo, valor in datos_actualizados.items():
+        setattr(vehiculo, campo, valor.strip() if isinstance(valor, str) else valor)
+
+    try:
+        db.commit()
+        db.refresh(vehiculo)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Error al actualizar el vehículo: {str(e)}")
+    return vehiculo
 
 # 23b. Reportar Posición GPS en Vivo del Vehículo (lo invoca el celular del repartidor
 #      cada pocos segundos mientras está en ruta, para el tracking en el mapa de despacho)
@@ -1982,6 +2060,45 @@ def listar_usuarios(
     usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
 ):
     return db.query(Usuario).filter(Usuario.empresa_id == usuario_actual.eid).all()
+
+# 25b. Editar Usuario / Empleado: nombre, email, rol, status y opcionalmente resetear contraseña
+@app.put("/api/v1/usuarios/{usuario_id}", tags=["Usuarios"], response_model=UsuarioResponse)
+def actualizar_usuario(
+    usuario_id: int,
+    datos: UsuarioUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+):
+    usuario = db.query(Usuario).filter(
+        Usuario.id == usuario_id, Usuario.empresa_id == usuario_actual.eid
+    ).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+
+    datos_actualizados = datos.model_dump(exclude_unset=True)
+    nuevo_email = datos_actualizados.pop("email", None)
+    if nuevo_email and nuevo_email.strip() != usuario.email:
+        duplicado = db.query(Usuario).filter(
+            Usuario.email == nuevo_email.strip(), Usuario.id != usuario_id
+        ).first()
+        if duplicado:
+            raise HTTPException(status_code=400, detail="El correo electrónico ya está en uso.")
+        usuario.email = nuevo_email.strip()
+
+    nueva_password = datos_actualizados.pop("password", None)
+    if nueva_password:
+        usuario.password_hash = generar_hash_password(nueva_password[:72])
+
+    for campo, valor in datos_actualizados.items():
+        setattr(usuario, campo, valor.strip().lower() if campo == "rol" and isinstance(valor, str) else (valor.strip() if isinstance(valor, str) else valor))
+
+    try:
+        db.commit()
+        db.refresh(usuario)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Error al actualizar el usuario: {str(e)}")
+    return usuario
 
 # 26. Analizar Foto de Producto con IA (Soporta una o dos fotos - frontal y trasera)
 @app.post("/api/v1/productos/analizar-foto", tags=["Productos"])
@@ -3434,6 +3551,12 @@ def abonar_cxc(
 
     cxc.monto_abonado += datos.monto
     cxc.status = _status_cuenta(cxc.monto_total, cxc.monto_abonado)
+    db.add(PagoCxc(
+        empresa_id=usuario_actual.eid,
+        cxc_id=cxc.id,
+        cliente_id=cxc.cliente_id,
+        monto=datos.monto,
+    ))
 
     try:
         db.commit()
@@ -3449,6 +3572,53 @@ def abonar_cxc(
         fecha_emision=cxc.fecha_emision, fecha_vencimiento=cxc.fecha_vencimiento, status=cxc.status,
         notas=cxc.notas, created_at=cxc.created_at
     )
+
+# --- Gestión de Cobranza: agendar una gestión (típicamente disparada por la Visita Cliente al
+#     detectar saldo vencido) y registrar la respuesta del cliente. No requiere rol de gestión:
+#     el vendedor que está parado frente al cliente es quien la agenda y la responde. ---
+
+@app.post("/api/v1/cobranzas/gestion-cobranza", tags=["Cobranzas"], response_model=GestionCobranzaSaveResponse, status_code=status.HTTP_201_CREATED)
+def crear_gestion_cobranza(
+    datos: GestionCobranzaCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_LECTURA_CARTERA))
+):
+    cliente = db.query(Cliente).filter(
+        Cliente.id == datos.cliente_id, Cliente.empresa_id == usuario_actual.eid
+    ).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado o no pertenece a la empresa.")
+
+    nueva = GestionCobranza(
+        empresa_id=usuario_actual.eid,
+        cliente_id=datos.cliente_id,
+        vendedor_id=usuario_actual.usuario_id,
+        tipo=datos.tipo,
+        fecha_programada=datos.fecha_programada or datetime.datetime.now(),
+    )
+    db.add(nueva)
+    db.commit()
+    db.refresh(nueva)
+    return GestionCobranzaSaveResponse(status="success", gestion_id=nueva.id)
+
+@app.put("/api/v1/cobranzas/gestion-cobranza/{gestion_id}/respuesta", tags=["Cobranzas"], response_model=GestionCobranzaSaveResponse)
+def responder_gestion_cobranza(
+    gestion_id: int,
+    datos: GestionCobranzaRespuestaUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_LECTURA_CARTERA))
+):
+    gestion = db.query(GestionCobranza).filter(
+        GestionCobranza.id == gestion_id, GestionCobranza.empresa_id == usuario_actual.eid
+    ).first()
+    if not gestion:
+        raise HTTPException(status_code=404, detail="Gestión de cobranza no encontrada.")
+
+    gestion.respuesta_cliente = datos.respuesta_cliente
+    gestion.efectiva = datos.efectiva
+    gestion.fecha_respuesta = datetime.datetime.now()
+    db.commit()
+    return GestionCobranzaSaveResponse(status="success", gestion_id=gestion.id)
 
 @app.post("/api/v1/cartera/cxp", tags=["Cartera"], response_model=CuentaPorPagarResponse, status_code=status.HTTP_201_CREATED)
 def crear_cxp(
@@ -4382,7 +4552,7 @@ def obtener_mi_config_empresa(
     else:
         modulos = [
             "dashboard", "ingreso", "balanza", "pos", "pedidos", "delivery",
-            "crm", "estadisticas", "almacen", "ficha", "tesoreria", "cuentas"
+            "crm", "estadisticas", "almacen", "ficha", "tesoreria", "cuentas", "visitas"
         ]
         
     return {
@@ -4498,6 +4668,290 @@ def listar_todas_visitas(
         VisitaCliente.empresa_id == usuario_actual.eid
     ).order_by(VisitaCliente.fecha_visita.desc()).all()
     return visitas
+
+# --- Visita Cliente: expediente 360° en terreno (encuesta de inventario por producto,
+#     stock cero, historial de compra real, proyección de reposición y cobranza en contexto) ---
+
+# 6.1 Encuesta de inventario: crea una VisitaCliente (tipo implícito de check-in) + sus líneas
+#     de stock observado/queja por producto, todo en una sola transacción.
+@app.post("/api/v1/visita-cliente/encuesta", tags=["Visita Cliente"], response_model=EncuestaInventarioSaveResponse, status_code=status.HTTP_201_CREATED)
+def crear_encuesta_inventario(
+    datos: EncuestaInventarioCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    if not datos.items:
+        raise HTTPException(status_code=400, detail="La encuesta debe incluir al menos un producto.")
+
+    cliente = db.query(Cliente).filter(
+        Cliente.id == datos.cliente_id,
+        Cliente.empresa_id == usuario_actual.eid
+    ).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado o no pertenece a la empresa.")
+
+    nueva_visita = VisitaCliente(
+        empresa_id=usuario_actual.eid,
+        vendedor_id=usuario_actual.usuario_id,
+        cliente_id=datos.cliente_id,
+        comentarios="Encuesta de inventario y quejas de productos",
+        lat=datos.lat,
+        lng=datos.lng,
+    )
+    db.add(nueva_visita)
+    db.flush()
+
+    items_guardados = 0
+    for item in datos.items:
+        producto = db.query(Producto).filter(
+            Producto.id == item.producto_id, Producto.empresa_id == usuario_actual.eid
+        ).first()
+        if not producto:
+            db.rollback()
+            raise HTTPException(status_code=404, detail=f"El producto {item.producto_id} no existe o no pertenece a su empresa.")
+
+        db.add(EncuestaInventarioItem(
+            visita_id=nueva_visita.id,
+            cliente_id=datos.cliente_id,
+            producto_id=item.producto_id,
+            stock_observado=item.stock_observado,
+            tiene_queja=item.tiene_queja,
+            detalle_queja=item.detalle_queja if item.tiene_queja else None,
+        ))
+        items_guardados += 1
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Error al registrar la encuesta: {str(e)}")
+
+    return EncuestaInventarioSaveResponse(status="success", visita_id=nueva_visita.id, items_guardados=items_guardados)
+
+def _ultimas_encuestas_por_producto(db: Session, empresa_id: int, cliente_id: int) -> dict[int, EncuestaInventarioItem]:
+    """Última fila de encuesta de inventario por producto para un cliente (MAX(created_at)
+    agrupando por producto_id). Nunca se lee de un campo mutable de 'stock actual'."""
+    filas = db.query(EncuestaInventarioItem).filter(
+        EncuestaInventarioItem.cliente_id == cliente_id
+    ).join(Cliente, Cliente.id == EncuestaInventarioItem.cliente_id).filter(
+        Cliente.empresa_id == empresa_id
+    ).order_by(EncuestaInventarioItem.producto_id, EncuestaInventarioItem.created_at.desc()).all()
+
+    ultimas: dict[int, EncuestaInventarioItem] = {}
+    for fila in filas:
+        if fila.producto_id not in ultimas:
+            ultimas[fila.producto_id] = fila
+    return ultimas
+
+# 6.2 Stock Cero: productos cuya última encuesta reportó stock_observado = 0
+@app.get("/api/v1/visita-cliente/clientes/{cliente_id}/stock-cero", tags=["Visita Cliente"], response_model=List[StockCeroItem])
+def stock_cero_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    ultimas = _ultimas_encuestas_por_producto(db, usuario_actual.eid, cliente_id)
+    en_cero = [fila for fila in ultimas.values() if fila.stock_observado == 0]
+    en_cero.sort(key=lambda f: f.created_at, reverse=True)
+
+    productos = {p.id: p for p in db.query(Producto).filter(Producto.id.in_([f.producto_id for f in en_cero])).all()}
+    return [
+        StockCeroItem(
+            producto_id=fila.producto_id,
+            codigo=productos[fila.producto_id].codigo_interno if fila.producto_id in productos else "",
+            nombre=productos[fila.producto_id].nombre if fila.producto_id in productos else "Producto eliminado",
+            stock_observado=fila.stock_observado,
+            creado_en=fila.created_at,
+        )
+        for fila in en_cero
+    ]
+
+def _tickets_procesados_cliente(db: Session, empresa_id: int, cliente_id: int):
+    return db.query(Ticket, Producto).join(Producto, Producto.id == Ticket.producto_id).filter(
+        Ticket.empresa_id == empresa_id,
+        Ticket.cliente_id == cliente_id,
+        Ticket.status == "procesado"
+    ).order_by(Ticket.created_at.desc()).all()
+
+# 6.3 Historial de compra: cada Ticket procesado es la unidad mínima de venta de este sistema
+#     (no existe un modelo de 'Factura' con múltiples líneas); se agrupan los tickets que
+#     comparten cliente + el mismo instante de creación (misma venta de Caja) como una factura.
+@app.get("/api/v1/visita-cliente/clientes/{cliente_id}/historial-compra", tags=["Visita Cliente"], response_model=List[FacturaResponse])
+def historial_compra_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    filas = _tickets_procesados_cliente(db, usuario_actual.eid, cliente_id)
+
+    grupos: dict[datetime.datetime, list[tuple]] = {}
+    for ticket, producto in filas:
+        grupos.setdefault(ticket.created_at, []).append((ticket, producto))
+
+    facturas: list[FacturaResponse] = []
+    for fecha, lineas in grupos.items():
+        primer_ticket = lineas[0][0]
+        items = [
+            FacturaItemResponse(
+                producto_id=producto.id,
+                codigo=producto.codigo_interno,
+                nombre=producto.nombre,
+                cantidad=ticket.peso,
+                precio_unitario=(ticket.monto_usd / ticket.peso) if ticket.peso else Decimal("0"),
+                total_linea=ticket.monto_usd,
+            )
+            for ticket, producto in lineas
+        ]
+        facturas.append(FacturaResponse(
+            id=primer_ticket.id,
+            numero=f"T-{primer_ticket.id}",
+            numero_factura_a2=None,
+            fecha_emision=fecha,
+            total_usd=sum((i.total_linea for i in items), Decimal("0")),
+            items=items,
+        ))
+
+    facturas.sort(key=lambda f: f.fecha_emision, reverse=True)
+    return facturas
+
+# 6.4 Ranking de productos comprados: agrega TODO el histórico de tickets del cliente
+@app.get("/api/v1/visita-cliente/clientes/{cliente_id}/ranking-productos", tags=["Visita Cliente"], response_model=List[RankingProductoItem])
+def ranking_productos_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    filas = _tickets_procesados_cliente(db, usuario_actual.eid, cliente_id)
+
+    agregado: dict[int, dict] = {}
+    for ticket, producto in filas:
+        acc = agregado.setdefault(producto.id, {
+            "producto": producto, "total_cantidad": Decimal("0"), "total_monto": Decimal("0"), "fechas": set()
+        })
+        acc["total_cantidad"] += ticket.peso
+        acc["total_monto"] += ticket.monto_usd
+        acc["fechas"].add(ticket.created_at)
+
+    ranking = [
+        RankingProductoItem(
+            producto_id=acc["producto"].id,
+            codigo=acc["producto"].codigo_interno,
+            nombre=acc["producto"].nombre,
+            total_cantidad=acc["total_cantidad"],
+            total_monto=acc["total_monto"],
+            num_facturas=len(acc["fechas"]),
+        )
+        for acc in agregado.values()
+    ]
+    ranking.sort(key=lambda r: r.total_cantidad, reverse=True)
+    return ranking
+
+# 6.5 Proyección de reposición: para cada producto comprado alguna vez, proyecta la próxima
+#     compra esperada según el intervalo promedio histórico y la cruza con el último stock
+#     observado en la encuesta de inventario.
+@app.get("/api/v1/visita-cliente/clientes/{cliente_id}/proyeccion-reposicion", tags=["Visita Cliente"], response_model=List[ProyeccionReposicionItem])
+def proyeccion_reposicion_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+):
+    filas = _tickets_procesados_cliente(db, usuario_actual.eid, cliente_id)
+    ultimas_encuestas = _ultimas_encuestas_por_producto(db, usuario_actual.eid, cliente_id)
+    hoy = datetime.datetime.now()
+
+    por_producto: dict[int, dict] = {}
+    for ticket, producto in filas:
+        acc = por_producto.setdefault(producto.id, {"producto": producto, "fechas": [], "cantidades": []})
+        acc["fechas"].append(ticket.created_at)
+        acc["cantidades"].append(ticket.peso)
+
+    resultado: list[ProyeccionReposicionItem] = []
+    for acc in por_producto.values():
+        producto = acc["producto"]
+        fechas = sorted(acc["fechas"])
+        cantidades = acc["cantidades"]
+        num_compras = len(fechas)
+        cantidad_promedio = (sum(cantidades, Decimal("0")) / num_compras) if num_compras else Decimal("0")
+        ultima_compra = fechas[-1]
+
+        intervalo_promedio_dias: Optional[float] = None
+        proxima_compra_esperada = None
+        if num_compras >= 2:
+            intervalos = [(fechas[i] - fechas[i - 1]).total_seconds() / 86400 for i in range(1, num_compras)]
+            intervalo_promedio_dias = sum(intervalos) / len(intervalos)
+            proxima_compra_esperada = (ultima_compra + datetime.timedelta(days=intervalo_promedio_dias)).date()
+
+        encuesta = ultimas_encuestas.get(producto.id)
+        stock_observado_actual = encuesta.stock_observado if encuesta else None
+
+        dias_para_proxima = (proxima_compra_esperada - hoy.date()).days if proxima_compra_esperada else None
+        recomendado_reponer_ahora = (
+            (stock_observado_actual is not None and stock_observado_actual <= 0)
+            or (dias_para_proxima is not None and dias_para_proxima <= 3)
+        )
+
+        resultado.append(ProyeccionReposicionItem(
+            producto_id=producto.id,
+            codigo=producto.codigo_interno,
+            nombre=producto.nombre,
+            num_compras=num_compras,
+            cantidad_promedio=cantidad_promedio,
+            intervalo_promedio_dias=intervalo_promedio_dias,
+            ultima_compra=ultima_compra,
+            proxima_compra_esperada=proxima_compra_esperada,
+            stock_observado_actual=stock_observado_actual,
+            recomendado_reponer_ahora=recomendado_reponer_ahora,
+        ))
+
+    resultado.sort(key=lambda r: (
+        not r.recomendado_reponer_ahora,
+        r.proxima_compra_esperada or datetime.date.max
+    ))
+    return resultado
+
+# 6.6 Historial de pago: CxC pendientes (marcando vencidas) + últimos 20 pagos. Si hay al
+#     menos una cuenta vencida, señaliza requiere_cuestionario_cobranza=True para que el
+#     frontend abra automáticamente el formulario de gestión de cobranza.
+@app.get("/api/v1/visita-cliente/clientes/{cliente_id}/historial-pago", tags=["Visita Cliente"], response_model=HistorialPagoResponse)
+def historial_pago_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_LECTURA_CARTERA))
+):
+    hoy = datetime.date.today()
+    cxc_pendientes = db.query(CuentaPorCobrar).filter(
+        CuentaPorCobrar.empresa_id == usuario_actual.eid,
+        CuentaPorCobrar.cliente_id == cliente_id,
+        CuentaPorCobrar.status != "pagada"
+    ).order_by(CuentaPorCobrar.fecha_vencimiento.asc()).all()
+
+    pendientes = [
+        PendienteCobroItem(
+            id=c.id,
+            numero_doc=f"CXC-{c.id}",
+            fecha_vencimiento=c.fecha_vencimiento,
+            saldo_usd=c.monto_total - c.monto_abonado,
+            vencida=c.fecha_vencimiento < hoy,
+        )
+        for c in cxc_pendientes
+    ]
+
+    pagos = db.query(PagoCxc).filter(
+        PagoCxc.empresa_id == usuario_actual.eid,
+        PagoCxc.cliente_id == cliente_id
+    ).order_by(PagoCxc.created_at.desc()).limit(20).all()
+
+    pagos_recientes = [
+        PagoRecienteItem(fecha=p.created_at, monto=p.monto, metodo=p.metodo, estado=p.estado)
+        for p in pagos
+    ]
+
+    return HistorialPagoResponse(
+        cliente_id=cliente_id,
+        pendientes=pendientes,
+        pagos_recientes=pagos_recientes,
+        requiere_cuestionario_cobranza=any(p.vencida for p in pendientes),
+    )
 
 # 7. Crear presupuesto / backorder (OrdenVenta)
 @app.post("/api/v1/ventas/ordenes", tags=["Fuerza de Ventas"], response_model=OrdenVentaResponse, status_code=status.HTTP_201_CREATED)
