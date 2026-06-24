@@ -81,3 +81,43 @@
   box-shadow: 0 0 20px rgba(var(--color-primary-rgb), 0.15);
 }
 
+/* ---- Estadísticas Avanzadas: efectos premium ---- */
+@keyframes pulse-glow-amber {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35), 0 8px 24px -8px rgba(245, 158, 11, 0.25); }
+  50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.12), 0 8px 28px -6px rgba(245, 158, 11, 0.4); }
+}
+.glow-pulse-amber {
+  animation: pulse-glow-amber 2.6s ease-in-out infinite;
+}
+
+@keyframes pulse-glow-emerald {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.3), 0 8px 24px -8px rgba(16, 185, 129, 0.2); }
+  50% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.1), 0 8px 28px -6px rgba(16, 185, 129, 0.35); }
+}
+.glow-pulse-emerald {
+  animation: pulse-glow-emerald 2.6s ease-in-out infinite;
+}
+
+.scrollbar-thin-custom {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 58, 237, 0.35) transparent;
+}
+.scrollbar-thin-custom::-webkit-scrollbar {
+  width: 5px;
+}
+.scrollbar-thin-custom::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin-custom::-webkit-scrollbar-thumb {
+  background-color: rgba(124, 58, 237, 0.35);
+  border-radius: 999px;
+}
+.scrollbar-thin-custom::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(124, 58, 237, 0.55);
+}
+
+.focus-glow:focus-within {
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.18), 0 0 18px rgba(124, 58, 237, 0.35);
+  border-color: rgba(124, 58, 237, 0.6);
+}
+
