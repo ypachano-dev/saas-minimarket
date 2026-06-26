@@ -1,4 +1,5 @@
 import { useSuscripcion, diasRestantes } from "../state/suscripcion";
+import { APP_NAME } from "../config/brand";
 
 export default function BannerVencimiento({ onReportar }: { onReportar: () => void }) {
   const [suscripcion] = useSuscripcion();
@@ -27,7 +28,7 @@ export default function BannerVencimiento({ onReportar }: { onReportar: () => vo
           </span>
           <p className="text-white text-sm font-semibold tracking-tight truncate">
             <span className="font-black uppercase text-[11px] tracking-wider mr-1.5 opacity-90">Suscripción</span>
-            Tu plan de SaaS MiniMarket {texto}. Evita interrupciones en tus cajas de cobro.
+            Tu plan de {APP_NAME} {texto}. Evita interrupciones en tus cajas de cobro.
           </p>
         </div>
         <button

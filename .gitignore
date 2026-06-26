@@ -3,8 +3,7 @@
 __pycache__/
 venv/
 .git/
-server.log
-vite.log
+*.log
 
 # Variables de entorno con credenciales (ANTHROPIC_API_KEY, etc.)
 .env

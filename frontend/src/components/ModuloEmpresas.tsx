@@ -1,7 +1,24 @@
 import { useState, type FormEvent } from "react";
+import apiClient from "../api/client";
 import { useSuscripcion, addDias } from "../state/suscripcion";
+import { APP_NAME, FIRMA_PROVEEDOR } from "../config/brand";
 
 const PLANES = ["Básico", "Profesional", "Premium", "Custom"];
+
+const TIPOS_NEGOCIO = [
+  { value: "minimarket", label: "Minimarket" },
+  { value: "ferreteria", label: "Ferretería" },
+  { value: "agropecuaria", label: "Agropecuaria" },
+  { value: "ferreagropecuaria", label: "FerreAgropecuaria" },
+] as const;
+
+const AGENTES_IA = [
+  { key: "vale", label: "Activar Agente VALE (Análisis/BI)" },
+  { key: "yhorge", label: "Activar Agente YHORGE (Control/Administración)" },
+  { key: "alo", label: "Activar Agente ALO (Ventas/CRM)" },
+] as const;
+
+type AgenteIAKey = typeof AGENTES_IA[number]["key"];
 
 const MODULOS_ERP = [
   { key: "dashboard", label: "Dashboard Maestro" },
@@ -88,6 +105,13 @@ const initialForm = {
   telefono: "",
   plan: PLANES[0],
   limiteUsuarios: "",
+  tipoNegocio: TIPOS_NEGOCIO[0].value as string,
+  nombreCorto: "",
+  logoUrl: "",
+  colorPrimario: "#00ebc7",
+  colorSecundario: "#111936",
+  nombreAdmin: "",
+  emailAdmin: "",
   usuarioAdmin: "",
   claveTemporal: "",
   fechaInicio: today(),
@@ -95,6 +119,8 @@ const initialForm = {
 };
 
 const initialModulos: Record<string, boolean> = Object.fromEntries(MODULOS_ERP.map((m) => [m.key, false]));
+
+const initialAgentesIA: Record<AgenteIAKey, boolean> = { vale: true, yhorge: true, alo: true };
 
 const initialPagoForm = { fecha: today(), monto: "", referencia: "", recibo: "" };
 
@@ -136,7 +162,9 @@ export default function ModuloEmpresas() {
   const [empresas, setEmpresas] = useState<Empresa[]>(EMPRESAS_INICIALES);
   const [form, setForm] = useState(initialForm);
   const [modulos, setModulos] = useState<Record<string, boolean>>(initialModulos);
+  const [agentesIA, setAgentesIA] = useState<Record<AgenteIAKey, boolean>>(initialAgentesIA);
   const [error, setError] = useState("");
+  const [enviando, setEnviando] = useState(false);
   const [modalEmpresa, setModalEmpresa] = useState<number | null>(null);
   const [pagoForm, setPagoForm] = useState(initialPagoForm);
   const [pagoError, setPagoError] = useState("");
@@ -150,7 +178,11 @@ export default function ModuloEmpresas() {
     setModulos((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
-  function handleSubmit(e: FormEvent) {
+  function toggleAgenteIA(key: AgenteIAKey) {
+    setAgentesIA((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
 
@@ -159,8 +191,8 @@ export default function ModuloEmpresas() {
       return;
     }
 
-    if (!form.usuarioAdmin.trim() || !form.claveTemporal.trim()) {
-      setError("Usuario Administrador Inicial y Clave Primaria Temporal son obligatorios.");
+    if (!form.nombreAdmin.trim() || !form.emailAdmin.trim() || !form.usuarioAdmin.trim() || !form.claveTemporal.trim()) {
+      setError("Nombre del Administrador, Correo, Usuario Administrador Inicial y Clave Primaria Temporal son obligatorios.");
       return;
     }
 
@@ -174,6 +206,32 @@ export default function ModuloEmpresas() {
       setError("Límite de Usuarios debe ser un número mayor a 0.");
       return;
     }
+
+    setEnviando(true);
+    try {
+      await apiClient.post("/api/v1/auth/registrar-saas", {
+        nombre_empresa: form.razonSocial.trim(),
+        rif_or_cedula: form.rif.trim(),
+        telefono: form.telefono.trim(),
+        tipo_negocio: form.tipoNegocio,
+        nombre_corto: form.nombreCorto.trim() || null,
+        logo_url: form.logoUrl.trim() || null,
+        color_primario: form.colorPrimario,
+        color_secundario: form.colorSecundario,
+        agente_vale_activo: agentesIA.vale,
+        agente_yhorge_activo: agentesIA.yhorge,
+        agente_alo_activo: agentesIA.alo,
+        nombre_admin: form.nombreAdmin.trim(),
+        username_admin: form.usuarioAdmin.trim(),
+        email_admin: form.emailAdmin.trim(),
+        password_admin: form.claveTemporal,
+      });
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "No se pudo crear la empresa en el servidor.");
+      setEnviando(false);
+      return;
+    }
+    setEnviando(false);
 
     const nuevaEmpresa: Empresa = {
       id: empresas.length ? Math.max(...empresas.map((emp) => emp.id)) + 1 : 1,
@@ -194,6 +252,7 @@ export default function ModuloEmpresas() {
     setEmpresas((prev) => [nuevaEmpresa, ...prev]);
     setForm(initialForm);
     setModulos(initialModulos);
+    setAgentesIA(initialAgentesIA);
   }
 
   function toggleEstado(id: number) {
@@ -289,7 +348,7 @@ export default function ModuloEmpresas() {
     <div className="p-6 space-y-6">
       <header>
         <h2 className="text-3xl font-black tracking-tight text-slate-900">Consola SaaS Maestro</h2>
-        <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Panel Maestro de Control de Suscripciones</p>
+        <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Panel Maestro de Control de Suscripciones · {APP_NAME}</p>
       </header>
 
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
@@ -351,6 +410,57 @@ export default function ModuloEmpresas() {
                 required
               />
             </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Tipo de Negocio</span>
+              <select
+                className={inputCls}
+                value={form.tipoNegocio}
+                onChange={(e) => set("tipoNegocio", e.target.value)}
+                required
+              >
+                {TIPOS_NEGOCIO.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Nombre Reducido</span>
+              <input
+                className={inputCls}
+                value={form.nombreCorto}
+                onChange={(e) => set("nombreCorto", e.target.value)}
+                placeholder="Ej: AgroBarinas"
+              />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>URL del Logo</span>
+              <input
+                className={inputCls}
+                value={form.logoUrl}
+                onChange={(e) => set("logoUrl", e.target.value)}
+                placeholder="https://.../logo.png"
+              />
+            </label>
+            <div className="flex items-center gap-4">
+              <label className="flex flex-1 flex-col">
+                <span className={labelCls}>Color Primario</span>
+                <input
+                  type="color"
+                  className="mt-1 h-10 w-full cursor-pointer rounded-xl border border-slate-200"
+                  value={form.colorPrimario}
+                  onChange={(e) => set("colorPrimario", e.target.value)}
+                />
+              </label>
+              <label className="flex flex-1 flex-col">
+                <span className={labelCls}>Color Secundario</span>
+                <input
+                  type="color"
+                  className="mt-1 h-10 w-full cursor-pointer rounded-xl border border-slate-200"
+                  value={form.colorSecundario}
+                  onChange={(e) => set("colorSecundario", e.target.value)}
+                />
+              </label>
+            </div>
           </div>
         </section>
 
@@ -358,6 +468,27 @@ export default function ModuloEmpresas() {
         <section>
           <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Creación de Credenciales Maestras</h3>
           <div className="mt-3 grid grid-cols-2 gap-4">
+            <label className="flex flex-col">
+              <span className={labelCls}>Nombre Completo del Administrador</span>
+              <input
+                className={inputCls}
+                value={form.nombreAdmin}
+                onChange={(e) => set("nombreAdmin", e.target.value)}
+                placeholder="Ej: Carlos Gerente"
+                required
+              />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Correo del Administrador</span>
+              <input
+                type="email"
+                className={inputCls}
+                value={form.emailAdmin}
+                onChange={(e) => set("emailAdmin", e.target.value)}
+                placeholder="admin@empresa.com"
+                required
+              />
+            </label>
             <label className="flex flex-col">
               <span className={labelCls}>Usuario Administrador Inicial</span>
               <input
@@ -424,8 +555,39 @@ export default function ModuloEmpresas() {
           </div>
         </section>
 
-        <button type="submit" className="w-full rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:bg-slate-700 hover:shadow-md">
-          Crear Empresa
+        {/* --- Guías de IA Independientes (VALE / YHORGE / ALO) --- */}
+        <section>
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Guías de IA Independientes</h3>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            {AGENTES_IA.map((a) => (
+              <div key={a.key} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                <span className="text-sm font-medium text-slate-700">{a.label}</span>
+                <button
+                  type="button"
+                  onClick={() => toggleAgenteIA(a.key)}
+                  title={`${a.label}: ${agentesIA[a.key] ? "Activado" : "Desactivado"}`}
+                  aria-label={`${a.label}: ${agentesIA[a.key] ? "Activado" : "Desactivado"}`}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${
+                    agentesIA[a.key] ? "bg-emerald-500" : "bg-slate-200"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-300 ${
+                      agentesIA[a.key] ? "translate-x-5" : ""
+                    }`}
+                  />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <button
+          type="submit"
+          disabled={enviando}
+          className="w-full rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:bg-slate-700 hover:shadow-md disabled:bg-slate-400"
+        >
+          {enviando ? "Creando Empresa..." : "Crear Empresa"}
         </button>
       </form>
 
@@ -614,6 +776,8 @@ export default function ModuloEmpresas() {
           </div>
         </div>
       )}
+
+      <p className="text-center text-[10px] font-medium text-slate-400 tracking-wide pt-2">{FIRMA_PROVEEDOR}</p>
     </div>
   );
 }

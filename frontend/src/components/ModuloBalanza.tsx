@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import apiClient from "../api/client";
 import ModuloDesposte from "./ModuloDesposte";
 import { normalizeDept, DEPARTAMENTOS_PESAJE } from "../lib/departamentos";
+import { APP_NAME } from "../config/brand";
 
 const labelClsAlta = "text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1";
 const inputClsAlta = "rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500";
@@ -607,7 +608,7 @@ export default function ModuloBalanza() {
             ⚖️ Balanza Digital Inteligente
           </h1>
           <p className="text-sm text-slate-500 font-medium mt-1">
-            Estación descentralizada de pesaje por departamento · SaaS MiniMarket
+            Estación descentralizada de pesaje por departamento · {APP_NAME}
           </p>
         </div>
         <div className="flex items-center gap-3">

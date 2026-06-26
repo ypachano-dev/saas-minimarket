@@ -16,7 +16,7 @@ export const DEPARTAMENTOS_PESAJE: DepartamentoPesaje[] = [
 
 export function normalizeDept(linea: string | null | undefined): string {
   if (!linea) return "";
-  const norm = linea.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const norm = linea.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   if (
     norm.includes("verduleria") ||
     norm.includes("verdura") ||

@@ -2,21 +2,79 @@ import datetime
 from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
+from app.core.negocio_config import TipoNegocio
+from app.core.ticket_config import TicketTamanoPapel
+from app.core.caja_config import EstadoTurno
 
 # Este es el molde de lo que el navegador debe enviar para registrar un negocio
 class RegistroEmpresaAdmin(BaseModel):
-    # Datos del Minimarket / Empresa
+    # Datos de la Empresa
     nombre_empresa: str
     rif_or_cedula: str
     telefono: Optional[str] = None
     direccion: Optional[str] = None
-    tipo_negocio: Optional[str] = "minimarket"
-    
+    tipo_negocio: Optional[TipoNegocio] = TipoNegocio.MINIMARKET
+
+    # Branding del inquilino (nombre corto, logo y paleta de colores)
+    nombre_corto: Optional[str] = None
+    logo_url: Optional[str] = None
+    color_primario: Optional[str] = None
+    color_secundario: Optional[str] = None
+
+    # Activación independiente de cada guía de IA para este inquilino
+    agente_vale_activo: bool = True
+    agente_yhorge_activo: bool = True
+    agente_alo_activo: bool = True
+
     # Datos del Dueño / Administrador
     nombre_admin: str
     username_admin: str
     email_admin: str
     password_admin: str
+
+# Molde de salida con la nomenclatura de inventario/ventas según el sector del inquilino
+class NomenclaturaNegocioResponse(BaseModel):
+    suite: str
+    inventario: str
+    item_inventario: str
+    venta: str
+
+# Molde de salida estricto de la configuración de marca y sector de la empresa
+class EmpresaConfigResponse(BaseModel):
+    id: int
+    rif: str
+    nombre_comercial: str
+    nombre_corto: Optional[str] = None
+    tipo_negocio: TipoNegocio
+    color_primario: str
+    color_secundario: str
+    logo_url: Optional[str] = None
+    modulos_habilitados: List[str]
+    nomenclatura: NomenclaturaNegocioResponse
+    agente_vale_activo: bool
+    agente_yhorge_activo: bool
+    agente_alo_activo: bool
+    ticket_config: "TicketConfigResponse"
+
+# Molde de salida con la plantilla de ticket de Caja vigente para el inquilino
+class TicketConfigResponse(BaseModel):
+    tamano_papel: TicketTamanoPapel
+    mostrar_logo: bool
+    mostrar_rif: bool
+    texto_cabecera: Optional[str] = None
+    texto_pie: Optional[str] = None
+    desglosar_impuestos: bool
+
+# Molde de entrada para actualizar la plantilla de ticket de Caja (todos los campos opcionales)
+class TicketConfigUpdate(BaseModel):
+    tamano_papel: Optional[TicketTamanoPapel] = None
+    mostrar_logo: Optional[bool] = None
+    mostrar_rif: Optional[bool] = None
+    texto_cabecera: Optional[str] = None
+    texto_pie: Optional[str] = None
+    desglosar_impuestos: Optional[bool] = None
+
+EmpresaConfigResponse.model_rebuild()
 
 # Molde de entrada para el inicio de sesión
 class LoginRequest(BaseModel):
@@ -200,6 +258,7 @@ class TicketItemCreate(BaseModel):
 class TicketCreate(BaseModel):
     cliente_id: int
     items: List[TicketItemCreate]
+    metodo_pago: str = "Efectivo $"
 
 # Molde de salida con los datos completos de un Ticket (una línea de la venta)
 # monto_ves se calcula dinámicamente (no se almacena) a partir de la tasa BCV vigente
@@ -414,6 +473,7 @@ class TicketModification(BaseModel):
 class ProcesarPagoTickets(BaseModel):
     ticket_ids: List[int]
     modificaciones: Optional[List[TicketModification]] = None
+    metodo_pago: str = "Efectivo $"
 
 # --- Esquemas para Delivery Exprés (PedidoDelivery) ---
 class PedidoDeliveryCreate(BaseModel):
@@ -1148,4 +1208,48 @@ class ActividadRtcItem(BaseModel):
     cliente_nombre: Optional[str] = None
     descripcion: str
     monto_usd: Optional[Decimal] = None
+
+# ==============================================================================
+# --- Control de Turnos y Arqueo de Caja ---
+# ==============================================================================
+
+# Molde de entrada para abrir un turno: el fondo de caja inicial en ambas monedas
+class AbrirTurnoRequest(BaseModel):
+    monto_inicial_usd: Decimal = Decimal("0.00")
+    monto_inicial_ves: Decimal = Decimal("0.00")
+
+# Molde de entrada para cerrar un turno: el conteo físico real que reporta el cajero
+class CerrarTurnoRequest(BaseModel):
+    monto_real_usd: Decimal
+    monto_real_ves: Decimal
+
+# Una línea del desglose de "monto esperado" por método de pago, para el panel de
+# arqueo y el ticket impreso
+class DesgloseMetodoPagoItem(BaseModel):
+    metodo_pago: str
+    monto_usd: Decimal
+    monto_ves: Decimal
+
+# Molde de salida completo de un turno de caja (abierto o cerrado)
+class TurnoCajaResponse(BaseModel):
+    id: int
+    usuario_id: int
+    cajero_nombre: Optional[str] = None
+    estado: EstadoTurno
+    fecha_apertura: datetime.datetime
+    fecha_cierre: Optional[datetime.datetime] = None
+    monto_inicial_usd: Decimal
+    monto_inicial_ves: Decimal
+    monto_esperado_usd: Decimal
+    monto_esperado_ves: Decimal
+    monto_real_usd: Optional[Decimal] = None
+    monto_real_ves: Optional[Decimal] = None
+    descuadre_usd: Optional[Decimal] = None
+    descuadre_ves: Optional[Decimal] = None
+    desglose_metodos: List[DesgloseMetodoPagoItem] = []
+
+# Molde de salida de GET /api/v1/caja/estado-turno
+class EstadoTurnoResponse(BaseModel):
+    turno_abierto: bool
+    turno: Optional[TurnoCajaResponse] = None
 

@@ -21,6 +21,7 @@ from app.models.producto import Producto
 from app.models.lote import Lote
 from app.models.merma import Merma
 from app.models.ticket import Ticket
+from app.models.turno_caja import TurnoCaja
 from app.models.cliente import Cliente
 from app.models.tasa import TasaCambio
 from app.models.peticion_faltante import PeticionFaltante
@@ -40,8 +41,13 @@ from app.models.orden_venta import OrdenVenta, OrdenVentaItem
 from app.models.ruta import RutaVendedor, RutaActividad
 from app.models.renglon_gasto import RenglonGasto, PagoRenglon
 from app.core.ai_agent import tiene_agente_ia, consultar_agente
+from app.core.negocio_config import TipoNegocio, NEGOCIO_CONFIG, GUIAS_AGENTES_IA, normalizar_tipo_negocio
+from app.core.ticket_config import TicketTamanoPapel, normalizar_tamano_papel
+from app.core.caja_config import EstadoTurno, METODOS_PAGO_CAJA, METODO_PAGO_VES
 from app.schemas import (
     RegistroEmpresaAdmin, LoginRequest, Token, TokenData,
+    EmpresaConfigResponse, NomenclaturaNegocioResponse, TicketConfigResponse, TicketConfigUpdate,
+    AbrirTurnoRequest, CerrarTurnoRequest, TurnoCajaResponse, EstadoTurnoResponse, DesgloseMetodoPagoItem,
     ClienteCreate, ClienteUpdate, ClienteResponse,
     ProductoCreate, ProductoUpdate, ProductoResponse, LoteCreate, LoteResponse,
     MermaCreate, MermaResponse, TicketCreate, TicketResponse, VentaResponse,
@@ -153,10 +159,17 @@ def registrar_empresa_y_admin(datos: RegistroEmpresaAdmin, db: Session = Depends
         # A. Crear la Empresa (Sincronizado con empresa.py)
         nueva_empresa = Empresa(
             nombre_comercial=datos.nombre_empresa,
+            nombre_corto=datos.nombre_corto or datos.nombre_empresa.split(" ")[0][:30],
             rif=datos.rif_or_cedula,
             telefono=datos.telefono,
             direccion=datos.direccion,
-            tipo_negocio=datos.tipo_negocio or "minimarket",
+            tipo_negocio=datos.tipo_negocio or TipoNegocio.MINIMARKET,
+            logo_url=datos.logo_url,
+            color_primario=datos.color_primario or "#00ebc7",
+            color_secundario=datos.color_secundario or "#111936",
+            agente_vale_activo=datos.agente_vale_activo,
+            agente_yhorge_activo=datos.agente_yhorge_activo,
+            agente_alo_activo=datos.agente_alo_activo,
             status="activo"
         )
         db.add(nueva_empresa)
@@ -1385,6 +1398,8 @@ def crear_ticket(
     if not datos.items:
         raise HTTPException(status_code=400, detail="La venta debe incluir al menos un producto.")
 
+    turno_activo = _requiere_turno_abierto(db, usuario_actual)
+
     # Validación Multi-Tenant: el cliente debe pertenecer a la empresa del usuario
     cliente = db.query(Cliente).filter(
         Cliente.id == datos.cliente_id,
@@ -1461,7 +1476,9 @@ def crear_ticket(
                 cliente_id=datos.cliente_id,
                 peso=item.peso,
                 monto_usd=monto_usd,
-                status="procesado"
+                status="procesado",
+                turno_id=turno_activo.id,
+                metodo_pago=datos.metodo_pago,
             )
             db.add(nuevo_ticket)
             tickets_creados.append((nuevo_ticket, monto_ves))
@@ -2630,7 +2647,7 @@ Asegúrate de responder únicamente con el bloque JSON. No agregues introduccion
                                 "tipo_envase": "Botella" if linea in ["Bebidas", "Cuidado Personal"] or "botella" in texto_lower else "Empaque",
                                 "peso": peso if peso > 0 else 0.500,
                                 "ubicacion": "Almacén General",
-                                "tipo_venta": type_venta if 'type_venta' in locals() else tipo_venta,
+                                "tipo_venta": tipo_venta,
                                 "refrigerado": refrigerado,
                                 "perecedero": perecedero,
                                 "fecha_elaboracion": str(datetime.date.today() - datetime.timedelta(days=15)),
@@ -3107,6 +3124,7 @@ def procesar_pago_tickets(
     db: Session = Depends(get_db),
     usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
 ):
+    turno_activo = _requiere_turno_abierto(db, usuario_actual)
     tickets_procesados = []
     try:
         mod_map = {}
@@ -3159,6 +3177,8 @@ def procesar_pago_tickets(
                     lote.status = "agotado"
 
             ticket.status = "procesado"
+            ticket.turno_id = turno_activo.id
+            ticket.metodo_pago = datos.metodo_pago
             tickets_procesados.append(ticket)
 
         db.commit()
@@ -3170,6 +3190,165 @@ def procesar_pago_tickets(
         raise HTTPException(status_code=400, detail=f"Error al procesar el cobro: {str(e)}")
 
     return {"mensaje": "Cobro de balanza finalizado.", "tickets_actualizados": len(tickets_procesados)}
+
+
+# ==============================================================================
+# --- Control de Turnos y Arqueo de Caja ---
+# ==============================================================================
+
+def _requiere_turno_abierto(db: Session, usuario_actual: TokenData) -> TurnoCaja:
+    """Exige que el cajero autenticado tenga un turno ABIERTO antes de procesar
+    un pago. Se usa dentro de crear_ticket y procesar_pago_tickets."""
+    turno = db.query(TurnoCaja).filter(
+        TurnoCaja.empresa_id == usuario_actual.eid,
+        TurnoCaja.usuario_id == usuario_actual.usuario_id,
+        TurnoCaja.estado == EstadoTurno.ABIERTO,
+    ).first()
+    if not turno:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debes abrir un turno de caja (fondo inicial) antes de procesar ventas.",
+        )
+    return turno
+
+
+def _calcular_esperado_y_desglose(
+    db: Session, empresa_id: int, turno: TurnoCaja
+) -> tuple[Decimal, Decimal, list[DesgloseMetodoPagoItem]]:
+    """Calcula el monto esperado en caja (fondo inicial + ventas 'procesado' del
+    turno) y su desglose por método de pago. 'Efectivo Bs' es el único método
+    cobrado en bolívares; todos los demás se cobran en su equivalente USD."""
+    tasa = db.query(TasaCambio).filter(TasaCambio.empresa_id == empresa_id).first()
+    tasa_bcv = tasa.valor_bcv if tasa else Decimal("0")
+
+    tickets = db.query(Ticket).filter(
+        Ticket.turno_id == turno.id,
+        Ticket.status == "procesado",
+    ).all()
+
+    por_metodo: dict[str, Decimal] = {m: Decimal("0.00") for m in METODOS_PAGO_CAJA}
+    for t in tickets:
+        metodo = t.metodo_pago if t.metodo_pago in por_metodo else METODOS_PAGO_CAJA[0]
+        por_metodo[metodo] += t.monto_usd
+
+    ventas_usd = sum((monto for metodo, monto in por_metodo.items() if metodo != METODO_PAGO_VES), Decimal("0.00"))
+    ventas_ves = (por_metodo[METODO_PAGO_VES] * tasa_bcv).quantize(Decimal("0.01"))
+
+    esperado_usd = (turno.monto_inicial_usd + ventas_usd).quantize(Decimal("0.01"))
+    esperado_ves = (turno.monto_inicial_ves + ventas_ves).quantize(Decimal("0.01"))
+
+    desglose = [
+        DesgloseMetodoPagoItem(
+            metodo_pago=metodo,
+            monto_usd=monto if metodo != METODO_PAGO_VES else Decimal("0.00"),
+            monto_ves=(monto * tasa_bcv).quantize(Decimal("0.01")) if metodo == METODO_PAGO_VES else Decimal("0.00"),
+        )
+        for metodo, monto in por_metodo.items()
+    ]
+    return esperado_usd, esperado_ves, desglose
+
+
+def _construir_turno_response(db: Session, turno: TurnoCaja) -> TurnoCajaResponse:
+    esperado_usd, esperado_ves, desglose = _calcular_esperado_y_desglose(db, turno.empresa_id, turno)
+    cajero = db.query(Usuario).filter(Usuario.id == turno.usuario_id).first()
+    descuadre_usd = (turno.monto_real_usd - esperado_usd) if turno.monto_real_usd is not None else None
+    descuadre_ves = (turno.monto_real_ves - esperado_ves) if turno.monto_real_ves is not None else None
+    return TurnoCajaResponse(
+        id=turno.id,
+        usuario_id=turno.usuario_id,
+        cajero_nombre=cajero.nombre if cajero else None,
+        estado=turno.estado,
+        fecha_apertura=turno.fecha_apertura,
+        fecha_cierre=turno.fecha_cierre,
+        monto_inicial_usd=turno.monto_inicial_usd,
+        monto_inicial_ves=turno.monto_inicial_ves,
+        monto_esperado_usd=esperado_usd,
+        monto_esperado_ves=esperado_ves,
+        monto_real_usd=turno.monto_real_usd,
+        monto_real_ves=turno.monto_real_ves,
+        descuadre_usd=descuadre_usd,
+        descuadre_ves=descuadre_ves,
+        desglose_metodos=desglose,
+    )
+
+
+@app.get("/api/v1/caja/estado-turno", tags=["Caja - Turnos"], response_model=EstadoTurnoResponse)
+def estado_turno_caja(
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION)),
+):
+    turno = db.query(TurnoCaja).filter(
+        TurnoCaja.empresa_id == usuario_actual.eid,
+        TurnoCaja.usuario_id == usuario_actual.usuario_id,
+        TurnoCaja.estado == EstadoTurno.ABIERTO,
+    ).first()
+    if not turno:
+        return EstadoTurnoResponse(turno_abierto=False, turno=None)
+    return EstadoTurnoResponse(turno_abierto=True, turno=_construir_turno_response(db, turno))
+
+
+@app.post("/api/v1/caja/abrir-turno", tags=["Caja - Turnos"], response_model=TurnoCajaResponse, status_code=status.HTTP_201_CREATED)
+def abrir_turno_caja(
+    datos: AbrirTurnoRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION)),
+):
+    existente = db.query(TurnoCaja).filter(
+        TurnoCaja.empresa_id == usuario_actual.eid,
+        TurnoCaja.usuario_id == usuario_actual.usuario_id,
+        TurnoCaja.estado == EstadoTurno.ABIERTO,
+    ).first()
+    if existente:
+        raise HTTPException(status_code=400, detail="Ya tienes un turno de caja abierto.")
+
+    nuevo_turno = TurnoCaja(
+        empresa_id=usuario_actual.eid,
+        usuario_id=usuario_actual.usuario_id,
+        estado=EstadoTurno.ABIERTO,
+        monto_inicial_usd=datos.monto_inicial_usd,
+        monto_inicial_ves=datos.monto_inicial_ves,
+    )
+    db.add(nuevo_turno)
+    try:
+        db.commit()
+        db.refresh(nuevo_turno)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="No se pudo abrir el turno de caja.")
+
+    return _construir_turno_response(db, nuevo_turno)
+
+
+@app.post("/api/v1/caja/cerrar-turno", tags=["Caja - Turnos"], response_model=TurnoCajaResponse)
+def cerrar_turno_caja(
+    datos: CerrarTurnoRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION)),
+):
+    turno = db.query(TurnoCaja).filter(
+        TurnoCaja.empresa_id == usuario_actual.eid,
+        TurnoCaja.usuario_id == usuario_actual.usuario_id,
+        TurnoCaja.estado == EstadoTurno.ABIERTO,
+    ).first()
+    if not turno:
+        raise HTTPException(status_code=400, detail="No tienes un turno de caja abierto para cerrar.")
+
+    esperado_usd, esperado_ves, _ = _calcular_esperado_y_desglose(db, usuario_actual.eid, turno)
+    turno.monto_esperado_usd = esperado_usd
+    turno.monto_esperado_ves = esperado_ves
+    turno.monto_real_usd = datos.monto_real_usd
+    turno.monto_real_ves = datos.monto_real_ves
+    turno.estado = EstadoTurno.CERRADO
+    turno.fecha_cierre = datetime.datetime.now()
+
+    try:
+        db.commit()
+        db.refresh(turno)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="No se pudo cerrar el turno de caja.")
+
+    return _construir_turno_response(db, turno)
 
 
 # --- Utilidades y Endpoints de Delivery Exprés y Compras ---
@@ -4134,9 +4313,41 @@ def dashboard_rubro_detalle(
 # Cada agente usa la API de Anthropic si hay ANTHROPIC_API_KEY configurada (ver app/core/ai_agent.py);
 # si no, cae a un resumen basado en reglas sobre los mismos datos reales, así nunca dependen de un
 # servicio externo para ser útiles desde el primer momento.
+#
+# Cada guía (VALE/YHORGE/ALO) se autoriza de forma INDIVIDUAL: requiere_guia_ia() resuelve, por
+# guía, el módulo que la respalda (GUIAS_AGENTES_IA) y verifica que ese módulo esté activo para el
+# tipo de negocio del inquilino. Ya no se conceden las tres guías como un bloque único.
+def requiere_guia_ia(nombre_guia: str, roles_permitidos: list[str] = ROLES_GESTION):
+    if nombre_guia not in GUIAS_AGENTES_IA:
+        raise ValueError(f"Guía de IA desconocida: {nombre_guia}")
+    modulo_requerido = GUIAS_AGENTES_IA[nombre_guia]
+
+    def dependencia(
+        usuario_actual: TokenData = Depends(verificar_rol(roles_permitidos)),
+        db: Session = Depends(get_db),
+    ) -> TokenData:
+        empresa = db.query(Empresa).filter(Empresa.id == usuario_actual.eid).first()
+        if not empresa:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada.")
+        tipo_negocio = normalizar_tipo_negocio(empresa.tipo_negocio)
+        modulos_activos = NEGOCIO_CONFIG[tipo_negocio]["modulos_base"]
+        if modulo_requerido not in modulos_activos:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"La guía '{nombre_guia.upper()}' no está habilitada para el sector de tu empresa.",
+            )
+        if not getattr(empresa, f"agente_{nombre_guia}_activo", True):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"La guía '{nombre_guia.upper()}' está desactivada para tu empresa.",
+            )
+        return usuario_actual
+
+    return dependencia
+
 
 VALE_SYSTEM_PROMPT = (
-    "Eres VALE, la analista de datos senior del SaaS MiniMarket. Tu trabajo es leer las cifras reales "
+    "Eres VALE, la analista de datos senior de 3Q Nexus ERP. Tu trabajo es leer las cifras reales "
     "del negocio que se te entregan en el contexto (ventas, productos, mermas, stock) y producir un "
     "análisis breve, directo y en español venezolano, con 3 a 5 hallazgos concretos y al menos 2 "
     "recomendaciones de acción accionables (qué producto reabastecer, qué precio ajustar, qué día de "
@@ -4145,7 +4356,7 @@ VALE_SYSTEM_PROMPT = (
 )
 
 YHORGE_SYSTEM_PROMPT = (
-    "Eres YHORGE, el especialista en cobranza y tesorería del SaaS MiniMarket. Recibes en el contexto "
+    "Eres YHORGE, el especialista en cobranza y tesorería de 3Q Nexus ERP. Recibes en el contexto "
     "las cuentas por cobrar (clientes que deben), cuentas por pagar (proveedores), los saldos de las "
     "cuentas bancarias y el detalle de las cuentas vencidas más urgentes con su cliente y teléfono. Tu "
     "trabajo es priorizar a quién cobrar primero (por monto y días de vencimiento), alertar si el flujo "
@@ -4155,7 +4366,7 @@ YHORGE_SYSTEM_PROMPT = (
 )
 
 ALO_SYSTEM_PROMPT = (
-    "Eres ALO, el asistente de ventas y gestión de clientes del SaaS MiniMarket. Tienes visión 360° de "
+    "Eres ALO, el asistente de ventas y gestión de clientes de 3Q Nexus ERP. Tienes visión 360° de "
     "cada cliente: su historial de compras, su saldo pendiente en cartera (CxC), sus visitas de campo y "
     "encuestas de mercadeo (si el negocio tiene vendedores de ruta), y sus presupuestos/pedidos recientes. "
     "Puedes hacer dos cosas según lo que se te pida:\n"
@@ -4245,7 +4456,7 @@ def _fallback_alo(contexto: dict) -> str:
 def agente_vale(
     datos: AgenteConsulta,
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+    usuario_actual: TokenData = Depends(requiere_guia_ia("vale"))
 ):
     estadisticas = _calcular_estadisticas(db, usuario_actual.eid)
     contexto = estadisticas.model_dump(mode="json")
@@ -4259,7 +4470,7 @@ def agente_vale(
 def agente_yhorge(
     datos: AgenteConsulta,
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+    usuario_actual: TokenData = Depends(requiere_guia_ia("yhorge"))
 ):
     empresa_id = usuario_actual.eid
     hoy = datetime.date.today()
@@ -4362,7 +4573,7 @@ def _construir_contexto_alo(db: Session, empresa_id: int, cliente: Cliente, item
 def agente_alo(
     datos: AloConsulta,
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+    usuario_actual: TokenData = Depends(requiere_guia_ia("alo", ROLES_OPERACION))
 ):
     empresa_id = usuario_actual.eid
     cliente = db.query(Cliente).filter(Cliente.id == datos.cliente_id, Cliente.empresa_id == empresa_id).first()
@@ -4499,7 +4710,7 @@ def _fallback_alo_campana(nombre: str, segmento: str, saldo_cxc: float) -> str:
 def campana_alo(
     datos: CampanaAloRequest,
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION))
+    usuario_actual: TokenData = Depends(requiere_guia_ia("alo", ROLES_OPERACION))
 ):
     empresa_id = usuario_actual.eid
     if datos.segmento not in SEGMENTOS_CRM:
@@ -4536,34 +4747,84 @@ def campana_alo(
 # --- MÓDULO FUERZA DE VENTAS (GPS, Visitas, Cotizaciones, Rutas y Viáticos) ---
 # ==============================================================================
 
-# 1. Obtener configuración de marca de la empresa (branding y tipo de negocio)
-@app.get("/api/v1/empresa/mi-config", tags=["Empresa"])
+# 1. Obtener configuración de marca de la empresa (branding y tipo de negocio).
+# El sector (TipoNegocio) determina, de forma estricta y centralizada en
+# app/core/negocio_config.py, tanto los módulos activos como la nomenclatura
+# de inventario/ventas que debe usar el frontend para ese inquilino.
+@app.get("/api/v1/empresa/mi-config", tags=["Empresa"], response_model=EmpresaConfigResponse)
 def obtener_mi_config_empresa(
     db: Session = Depends(get_db),
     usuario_actual: TokenData = Depends(get_current_user)
-):
+) -> EmpresaConfigResponse:
     empresa = db.query(Empresa).filter(Empresa.id == usuario_actual.eid).first()
     if not empresa:
-        raise HTTPException(status_code=404, detail="Empresa no encontrada.")
-        
-    # Definición de módulos activos por tipo de negocio (Feature Flags)
-    if empresa.tipo_negocio == "agroferreteria":
-        modulos = ["dashboard", "visitas", "rutas", "ficha", "crm", "estadisticas", "tesoreria", "cuentas"]
-    else:
-        modulos = [
-            "dashboard", "ingreso", "balanza", "pos", "pedidos", "delivery",
-            "crm", "estadisticas", "almacen", "ficha", "tesoreria", "cuentas", "visitas"
-        ]
-        
-    return {
-        "id": empresa.id,
-        "nombre_comercial": empresa.nombre_comercial,
-        "tipo_negocio": empresa.tipo_negocio,
-        "color_primario": empresa.color_primario,
-        "color_secundario": empresa.color_secundario,
-        "logo_url": empresa.logo_url,
-        "modulos_habilitados": modulos
-    }
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada.")
+
+    tipo_negocio = normalizar_tipo_negocio(empresa.tipo_negocio)
+    config = NEGOCIO_CONFIG[tipo_negocio]
+
+    return EmpresaConfigResponse(
+        id=empresa.id,
+        rif=empresa.rif,
+        nombre_comercial=empresa.nombre_comercial,
+        nombre_corto=empresa.nombre_corto,
+        tipo_negocio=tipo_negocio,
+        color_primario=empresa.color_primario,
+        color_secundario=empresa.color_secundario,
+        logo_url=empresa.logo_url,
+        modulos_habilitados=config["modulos_base"],
+        nomenclatura=NomenclaturaNegocioResponse(**config["nomenclatura"]),
+        agente_vale_activo=empresa.agente_vale_activo,
+        agente_yhorge_activo=empresa.agente_yhorge_activo,
+        agente_alo_activo=empresa.agente_alo_activo,
+        ticket_config=TicketConfigResponse(
+            tamano_papel=normalizar_tamano_papel(empresa.ticket_tamano_papel),
+            mostrar_logo=empresa.ticket_mostrar_logo,
+            mostrar_rif=empresa.ticket_mostrar_rif,
+            texto_cabecera=empresa.ticket_texto_cabecera,
+            texto_pie=empresa.ticket_texto_pie,
+            desglosar_impuestos=empresa.ticket_desglosar_impuestos,
+        ),
+    )
+
+# 1.b Actualizar la plantilla de ticket de Caja del inquilino (PATCH parcial)
+@app.put("/api/v1/empresa/config-ticket", tags=["Empresa"], response_model=TicketConfigResponse)
+def actualizar_config_ticket(
+    datos: TicketConfigUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION)),
+) -> TicketConfigResponse:
+    empresa = db.query(Empresa).filter(Empresa.id == usuario_actual.eid).first()
+    if not empresa:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada.")
+
+    if datos.tamano_papel is not None:
+        empresa.ticket_tamano_papel = datos.tamano_papel
+    if datos.mostrar_logo is not None:
+        empresa.ticket_mostrar_logo = datos.mostrar_logo
+    if datos.mostrar_rif is not None:
+        empresa.ticket_mostrar_rif = datos.mostrar_rif
+    if datos.texto_cabecera is not None:
+        empresa.ticket_texto_cabecera = datos.texto_cabecera
+    if datos.texto_pie is not None:
+        empresa.ticket_texto_pie = datos.texto_pie
+    if datos.desglosar_impuestos is not None:
+        empresa.ticket_desglosar_impuestos = datos.desglosar_impuestos
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se pudo guardar la configuración de ticket.")
+
+    return TicketConfigResponse(
+        tamano_papel=normalizar_tamano_papel(empresa.ticket_tamano_papel),
+        mostrar_logo=empresa.ticket_mostrar_logo,
+        mostrar_rif=empresa.ticket_mostrar_rif,
+        texto_cabecera=empresa.ticket_texto_cabecera,
+        texto_pie=empresa.ticket_texto_pie,
+        desglosar_impuestos=empresa.ticket_desglosar_impuestos,
+    )
 
 # 2. Actualizar posición GPS del vendedor
 @app.post("/api/v1/usuarios/gps", tags=["Fuerza de Ventas"])

@@ -1,7 +1,9 @@
+import { APP_NAME, FIRMA_PROVEEDOR } from "../config/brand";
+
 export type ViewKey =
   | "dashboard" | "ingreso" | "pos" | "pedidos" | "delivery"
   | "crm" | "estadisticas" | "almacen" | "tesoreria" | "ficha" | "consola" | "cuentas" | "balanza"
-  | "visitas" | "rutas";
+  | "visitas" | "rutas" | "configuracion";
 
 export interface ModuloDef {
   key: ViewKey;
@@ -25,8 +27,16 @@ export const MODULOS: ModuloDef[] = [
   { key: "cuentas", icon: "💸", label: "Cartera y Créditos (YHORGE)" },
   { key: "tesoreria", icon: "🏦", label: "Bancos y Tesorería" },
   { key: "ficha", icon: "🗂️", label: "Ficha de Catálogo", pendientes: ["Foto", "Nombre", "Descripción", "Marca", "Proveedor", "Código de barra", "Peso", "Presentación", "Fecha de vencimiento (FV)", "Fecha de elaboración", "Fecha de ingreso", "Tipo", "Ubicación"] },
+  { key: "configuracion", icon: "🧾", label: "Configuración de Tienda" },
   { key: "consola", icon: "⚙️", label: "Consola SaaS Maestro" },
 ];
+
+const TAGLINE_POR_TIPO_NEGOCIO: Record<string, string> = {
+  minimarket: "MiniMarket Suite",
+  ferreteria: "Ferretería Suite",
+  agropecuaria: "Agropecuaria Suite",
+  ferreagropecuaria: "Agroferretería Suite",
+};
 
 export default function Sidebar({
   view,
@@ -35,6 +45,8 @@ export default function Sidebar({
   rol,
   tipoNegocio,
   nombreEmpresa,
+  nombreCorto,
+  logoUrl,
   modulosHabilitados
 }: {
   view: ViewKey;
@@ -43,10 +55,13 @@ export default function Sidebar({
   rol?: string | null;
   tipoNegocio?: string | null;
   nombreEmpresa?: string | null;
+  nombreCorto?: string | null;
+  logoUrl?: string | null;
   modulosHabilitados?: string[];
 }) {
   const modulos = MODULOS.filter((m) => {
     if (m.key === "consola") return rol === "propietario";
+    if (m.key === "configuracion") return rol === "admin" || rol === "propietario";
     if (rol === "repartidor") return m.key === "delivery";
     
     // Si el usuario es un vendedor RTC, solo ve Dashboard, Visita Clientes, Rutas y Ficha Catálogo
@@ -67,18 +82,26 @@ export default function Sidebar({
       <div className="flex flex-col overflow-hidden h-full">
         {/* Brand Header */}
         <div className="px-3 py-4 mb-4 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-brand-gradient flex items-center justify-center shadow-lg shadow-brand-primary/25 relative overflow-hidden">
-            <span className="text-white font-extrabold text-sm relative z-10">
-              {(nombreEmpresa || "M").substring(0, 1).toUpperCase()}
-            </span>
-            <div className="absolute inset-0 bg-white/20 blur-[2px] transform rotate-45 translate-y-3"></div>
-          </div>
+          {logoUrl ? (
+            <img
+              src={logoUrl}
+              alt={nombreCorto || nombreEmpresa || APP_NAME}
+              className="w-9 h-9 rounded-xl object-cover shadow-lg shadow-brand-primary/25"
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-xl bg-brand-gradient flex items-center justify-center shadow-lg shadow-brand-primary/25 relative overflow-hidden">
+              <span className="text-white font-extrabold text-sm relative z-10">
+                {(nombreCorto || nombreEmpresa || APP_NAME).substring(0, 1).toUpperCase()}
+              </span>
+              <div className="absolute inset-0 bg-white/20 blur-[2px] transform rotate-45 translate-y-3"></div>
+            </div>
+          )}
           <div>
             <h1 className="text-md font-bold tracking-tight text-white leading-none truncate w-36">
-              {nombreEmpresa || "MiniMarket SaaS"}
+              {nombreCorto || nombreEmpresa || APP_NAME}
             </h1>
             <p className="text-[10px] font-semibold uppercase tracking-widest text-brand-primary mt-1">
-              {tipoNegocio === "agroferreteria" ? "Agroferretería Suite" : "MiniMarket Suite"}
+              {(tipoNegocio && TAGLINE_POR_TIPO_NEGOCIO[tipoNegocio]) || "MiniMarket Suite"}
             </p>
           </div>
         </div>
@@ -90,6 +113,7 @@ export default function Sidebar({
             return (
               <button
                 key={m.key}
+                type="button"
                 onClick={() => setView(m.key)}
                 className={`group flex items-center gap-3 rounded-xl px-3.5 py-3 text-xs font-medium text-left transition-all duration-300 transform hover:translate-x-1 ${
                   isActive
@@ -120,12 +144,17 @@ export default function Sidebar({
         </div>
         
         <button
+          type="button"
           onClick={onLogout}
           className="flex items-center justify-center gap-2 w-full rounded-xl px-3.5 py-2.5 text-xs font-semibold text-rose-400 bg-rose-500/5 hover:bg-rose-500/15 border border-rose-500/10 hover:border-rose-500/20 transition-all duration-300"
         >
           <span className="text-sm">⎋</span>
           Cerrar sesión
         </button>
+
+        <p className="text-center text-[9px] font-medium text-slate-600 tracking-wide pt-1">
+          {FIRMA_PROVEEDOR}
+        </p>
       </div>
     </aside>
   );

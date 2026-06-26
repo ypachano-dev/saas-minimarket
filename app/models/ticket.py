@@ -37,4 +37,9 @@ class Ticket(Base):
     coord_x: Mapped[float] = mapped_column(Float, default=250.0)
     coord_y: Mapped[float] = mapped_column(Float, default=180.0)
 
+    # Control de Turnos y Arqueo de Caja: a qué turno pertenece esta venta y con qué
+    # método se cobró (nullable: tickets anteriores a esta feature no tienen turno).
+    turno_id: Mapped[int | None] = mapped_column(ForeignKey("turnocaja.id"), nullable=True)
+    metodo_pago: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())

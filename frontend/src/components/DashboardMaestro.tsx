@@ -41,11 +41,33 @@ const METRICAS_MINIMARKET: MetricaDepartamento[] = [
   { linea: "Farmacia", nombre: "💊 Departamento de Farmacia / Medicinas", kilos_despachados: 150.20, ventas_usd: 2250.00, merma_kilos: 1.50, rendimiento: 99.0, personal_comision: 112.50 },
 ];
 
-const METRICAS_AGROFERRETERIA: MetricaDepartamento[] = [
-  { linea: "Ferretería", nombre: "🛠️ Departamento de Ferretería", kilos_despachados: 1980.00, ventas_usd: 5940.00, merma_kilos: 5.00, rendimiento: 99.9, personal_comision: 297.00 },
-  { linea: "Agroinsumos", nombre: "🌱 Departamento de Agroinsumos", kilos_despachados: 4500.00, ventas_usd: 9000.00, merma_kilos: 90.00, rendimiento: 98.0, personal_comision: 450.00 },
-  { linea: "Maquinaria", nombre: "🚜 Departamento de Maquinaria", kilos_despachados: 850.00, ventas_usd: 17000.00, merma_kilos: 0.00, rendimiento: 100.0, personal_comision: 850.00 },
-];
+const DEPTO_FERRETERIA: MetricaDepartamento = { linea: "Ferretería", nombre: "🛠️ Departamento de Ferretería", kilos_despachados: 1980.00, ventas_usd: 5940.00, merma_kilos: 5.00, rendimiento: 99.9, personal_comision: 297.00 };
+const DEPTO_AGROINSUMOS: MetricaDepartamento = { linea: "Agroinsumos", nombre: "🌱 Departamento de Agroinsumos", kilos_despachados: 4500.00, ventas_usd: 9000.00, merma_kilos: 90.00, rendimiento: 98.0, personal_comision: 450.00 };
+const DEPTO_MAQUINARIA: MetricaDepartamento = { linea: "Maquinaria", nombre: "🚜 Departamento de Maquinaria", kilos_despachados: 850.00, ventas_usd: 17000.00, merma_kilos: 0.00, rendimiento: 100.0, personal_comision: 850.00 };
+
+const METRICAS_FERRETERIA: MetricaDepartamento[] = [DEPTO_FERRETERIA, DEPTO_MAQUINARIA];
+const METRICAS_AGROPECUARIA: MetricaDepartamento[] = [DEPTO_AGROINSUMOS, DEPTO_MAQUINARIA];
+const METRICAS_AGROFERRETERIA: MetricaDepartamento[] = [DEPTO_FERRETERIA, DEPTO_AGROINSUMOS, DEPTO_MAQUINARIA];
+
+type TipoNegocio = "minimarket" | "ferreteria" | "agropecuaria" | "ferreagropecuaria";
+
+const ETIQUETA_SECTOR: Record<TipoNegocio, string> = {
+  minimarket: "MiniMarket",
+  ferreteria: "Ferretería",
+  agropecuaria: "Agropecuaria",
+  ferreagropecuaria: "Agroferretería",
+};
+
+const METRICAS_POR_SECTOR: Record<TipoNegocio, MetricaDepartamento[]> = {
+  minimarket: METRICAS_MINIMARKET,
+  ferreteria: METRICAS_FERRETERIA,
+  agropecuaria: METRICAS_AGROPECUARIA,
+  ferreagropecuaria: METRICAS_AGROFERRETERIA,
+};
+
+function resolverTipoNegocio(valor?: string): TipoNegocio {
+  return valor === "ferreteria" || valor === "agropecuaria" || valor === "ferreagropecuaria" ? valor : "minimarket";
+}
 
 const DETALLE_REPONER_SEED: ItemCritico[] = [
   { id: "P001", nombre: "Harina PAN 1kg", proveedor: "Distribuidora Polar", stock: 15, minimo: 50, velocidad_mes: 360 },
@@ -108,8 +130,8 @@ function tiempoRelativo(fechaIso: string): string {
 }
 
 export default function DashboardMaestro({ tipoNegocio, rol }: { tipoNegocio?: string; rol?: string | null }) {
-  const isAgro = tipoNegocio === "agroferreteria";
-  const defaultDeptos = isAgro ? METRICAS_AGROFERRETERIA : METRICAS_MINIMARKET;
+  const sector = resolverTipoNegocio(tipoNegocio);
+  const defaultDeptos = METRICAS_POR_SECTOR[sector];
 
   const [deptos, setDeptos] = useState<MetricaDepartamento[]>(defaultDeptos);
   const [reponerList, setReponerList] = useState<ItemCritico[]>(DETALLE_REPONER_SEED);
@@ -224,7 +246,7 @@ export default function DashboardMaestro({ tipoNegocio, rol }: { tipoNegocio?: s
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2 px-1">
           <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">
-            📊 Balance Operativo de Rubros ({isAgro ? "Agroferretería" : "MiniMarket"})
+            📊 Balance Operativo de Rubros ({ETIQUETA_SECTOR[sector]})
           </h3>
           <SelectorRangoFechas desde={rangoDesde} hasta={rangoHasta} onChange={(d, h) => { setRangoDesde(d); setRangoHasta(h); }} />
         </div>

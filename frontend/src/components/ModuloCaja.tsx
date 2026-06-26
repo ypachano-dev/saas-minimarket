@@ -3,6 +3,8 @@ import apiClient from "../api/client";
 import DeliveryOrderForm from "./DeliveryOrderForm";
 import ModalSolicitudDesposte from "./ModalSolicitudDesposte";
 import { normalizeDept } from "../lib/departamentos";
+import TicketTermico, { TICKET_CONFIG_DEFAULT, type TicketConfigVM, type TicketDatosVM } from "./TicketTermico";
+import TicketArqueoCaja, { type TurnoCajaVM } from "./TicketArqueoCaja";
 
 interface ClienteLite {
   id: number;
@@ -41,8 +43,30 @@ interface TicketPendiente {
   created_at: string;
 }
 
+// Carrito completo "puesto en espera" para atender a otro cliente sin perder la venta en curso
+interface TicketSuspendido {
+  id: string;
+  cliente: ClienteLite;
+  carrito: ItemCarrito[];
+  ticketsSeleccionados: number[];
+  ticketModificaciones: Record<number, number>;
+  guardadoEn: string;
+}
+
+// Una línea de Ticket ya procesada (Historial de Ventas del día), tal como la devuelve
+// GET /api/v1/tickets?status=procesado
+interface VentaHistorialItem {
+  id: number;
+  created_at: string;
+  monto_usd: number;
+  monto_ves: number;
+  producto_id: number;
+  cliente: string | null;
+}
+
 const DEFAULT_TASA_BCV = 602.33;
 const METODOS_PAGO = ["Efectivo $", "Efectivo Bs", "Punto de Venta", "Pago Móvil"];
+const LOCALSTORAGE_KEY_SUSPENDIDOS = "pos_tickets_suspendidos_v1";
 
 const fmtKg = (n: number) => n.toLocaleString("es-VE", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 const fmt = (n: number) => n.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -191,9 +215,47 @@ export default function ModuloCaja() {
   const [pesoInput, setPesoInput] = useState("");
   const scanRef = useRef<HTMLInputElement>(null);
 
+  // --- Control de Turnos y Arqueo de Caja ---
+  const [cargandoTurno, setCargandoTurno] = useState(true);
+  const [turnoActivo, setTurnoActivo] = useState<TurnoCajaVM | null>(null);
+  const [fondoInicialUsd, setFondoInicialUsd] = useState("");
+  const [fondoInicialVes, setFondoInicialVes] = useState("");
+  const [abriendoTurno, setAbriendoTurno] = useState(false);
+  const [errorApertura, setErrorApertura] = useState("");
+  const [mostrarArqueo, setMostrarArqueo] = useState(false);
+  const [conteoReal, setConteoReal] = useState<Record<string, string>>(
+    () => Object.fromEntries(METODOS_PAGO.map((m) => [m, ""]))
+  );
+  const [cerrandoTurno, setCerrandoTurno] = useState(false);
+  const [errorArqueo, setErrorArqueo] = useState("");
+  const [ticketArqueoImprimir, setTicketArqueoImprimir] = useState<TurnoCajaVM | null>(null);
+
+  // --- Tickets en espera (carritos suspendidos, persistidos en localStorage) ---
+  const [ticketsSuspendidos, setTicketsSuspendidos] = useState<TicketSuspendido[]>(() => {
+    try {
+      const raw = localStorage.getItem(LOCALSTORAGE_KEY_SUSPENDIDOS);
+      return raw ? (JSON.parse(raw) as TicketSuspendido[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [mostrarTicketsSuspendidos, setMostrarTicketsSuspendidos] = useState(false);
+
+  // --- Historial de Ventas del día (reimpresión sin alterar la venta activa) ---
+  const [historialVentasDia, setHistorialVentasDia] = useState<VentaHistorialItem[]>([]);
+  const [mostrarHistorialVentas, setMostrarHistorialVentas] = useState(false);
+  const [cargandoHistorialVentas, setCargandoHistorialVentas] = useState(false);
+  const [ticketReimprimirDatos, setTicketReimprimirDatos] = useState<TicketDatosVM | null>(null);
+
   // --- Tasa, Database and pending tickets ---
   const [tasaBcv, setTasaBcv] = useState(DEFAULT_TASA_BCV);
   const [dbProductos, setDbProductos] = useState<ProductoResponse[]>([]);
+  const [ticketConfig, setTicketConfig] = useState<TicketConfigVM>(TICKET_CONFIG_DEFAULT);
+  const [empresaTicketInfo, setEmpresaTicketInfo] = useState<{ nombre_comercial: string; rif: string; logo_url: string | null }>({
+    nombre_comercial: "Mi Negocio",
+    rif: "",
+    logo_url: null,
+  });
   const [ticketsPendientes, setTicketsPendientes] = useState<TicketPendiente[]>([]);
   const [ticketsSeleccionados, setTicketsSeleccionados] = useState<number[]>([]);
   const [ticketModificaciones, setTicketModificaciones] = useState<Record<number, number>>({});
@@ -251,6 +313,108 @@ export default function ModuloCaja() {
       .then((res) => setSolicitudesCompletadas(res.data))
       .catch(() => setSolicitudesCompletadas([]));
   }, []);
+
+  // Persiste los carritos suspendidos para que sobrevivan a un refresh de página
+  useEffect(() => {
+    localStorage.setItem(LOCALSTORAGE_KEY_SUSPENDIDOS, JSON.stringify(ticketsSuspendidos));
+  }, [ticketsSuspendidos]);
+
+  // Dispara la impresión nativa aislando solo el ticket reimpreso, sin tocar el carrito activo
+  useEffect(() => {
+    if (!ticketReimprimirDatos) return;
+    const limpiar = () => setTicketReimprimirDatos(null);
+    window.addEventListener("afterprint", limpiar);
+    window.print();
+    return () => window.removeEventListener("afterprint", limpiar);
+  }, [ticketReimprimirDatos]);
+
+  // Verifica de inmediato si el cajero tiene un turno abierto al entrar al módulo
+  useEffect(() => {
+    apiClient.get("/api/v1/caja/estado-turno")
+      .then((res) => setTurnoActivo(res.data.turno_abierto ? res.data.turno : null))
+      .catch(() => setTurnoActivo(null))
+      .finally(() => setCargandoTurno(false));
+  }, []);
+
+  // Imprime automáticamente el comprobante de arqueo tras un cierre de turno exitoso
+  useEffect(() => {
+    if (!ticketArqueoImprimir) return;
+    const limpiar = () => setTicketArqueoImprimir(null);
+    window.addEventListener("afterprint", limpiar);
+    window.print();
+    return () => window.removeEventListener("afterprint", limpiar);
+  }, [ticketArqueoImprimir]);
+
+  // Registra el fondo de caja inicial y abre el turno; bloquea el teclado del POS hasta entonces
+  async function abrirTurno() {
+    setErrorApertura("");
+    const usd = Number(fondoInicialUsd) || 0;
+    const ves = Number(fondoInicialVes) || 0;
+    setAbriendoTurno(true);
+    try {
+      const { data } = await apiClient.post<TurnoCajaVM>("/api/v1/caja/abrir-turno", {
+        monto_inicial_usd: usd,
+        monto_inicial_ves: ves,
+      });
+      setTurnoActivo(data);
+      setFondoInicialUsd("");
+      setFondoInicialVes("");
+    } catch (err: any) {
+      setErrorApertura(err?.response?.data?.detail || "No se pudo abrir el turno de caja.");
+    } finally {
+      setAbriendoTurno(false);
+    }
+  }
+
+  // Refresca el turno (monto esperado/desglose más reciente) y abre el panel de arqueo
+  async function abrirModalArqueo() {
+    setErrorArqueo("");
+    try {
+      const { data } = await apiClient.get("/api/v1/caja/estado-turno");
+      if (data.turno_abierto) setTurnoActivo(data.turno);
+    } catch {
+      // Si falla el refresco, se muestra el último estado conocido de turnoActivo
+    }
+    setConteoReal(Object.fromEntries(METODOS_PAGO.map((m) => [m, ""])));
+    setMostrarArqueo(true);
+  }
+
+  function actualizarConteoReal(metodo: string, valor: string) {
+    setConteoReal((prev) => ({ ...prev, [metodo]: valor }));
+  }
+
+  // Suma el conteo físico ingresado por método: los 3 métodos en USD se agregan a
+  // monto_real_usd; "Efectivo Bs" es el único que se reporta en monto_real_ves.
+  function calcularRealUsdVes(): { realUsd: number; realVes: number } {
+    let realUsd = 0;
+    let realVes = 0;
+    for (const metodo of METODOS_PAGO) {
+      const valor = Number(conteoReal[metodo]) || 0;
+      if (metodo === "Efectivo Bs") realVes += valor;
+      else realUsd += valor;
+    }
+    return { realUsd, realVes };
+  }
+
+  async function cerrarTurnoConArqueo() {
+    if (!turnoActivo) return;
+    setErrorArqueo("");
+    setCerrandoTurno(true);
+    const { realUsd, realVes } = calcularRealUsdVes();
+    try {
+      const { data } = await apiClient.post<TurnoCajaVM>("/api/v1/caja/cerrar-turno", {
+        monto_real_usd: realUsd,
+        monto_real_ves: realVes,
+      });
+      setMostrarArqueo(false);
+      setTurnoActivo(null);
+      setTicketArqueoImprimir(data);
+    } catch (err: any) {
+      setErrorArqueo(err?.response?.data?.detail || "No se pudo cerrar el turno de caja.");
+    } finally {
+      setCerrandoTurno(false);
+    }
+  }
 
   useEffect(() => {
     cargarSolicitudesPendientesDesposte();
@@ -371,6 +535,24 @@ export default function ModuloCaja() {
         setDbProductos(res.data);
       })
       .catch((err) => console.error("Error al cargar catálogo:", err));
+
+    // Lee la configuración activa del inquilino para imprimir el ticket con su plantilla
+    apiClient.get("/api/v1/empresa/mi-config")
+      .then((res) => {
+        const data = res.data;
+        setEmpresaTicketInfo({ nombre_comercial: data.nombre_comercial, rif: data.rif, logo_url: data.logo_url ?? null });
+        if (data.ticket_config) {
+          setTicketConfig({
+            tamano_papel: data.ticket_config.tamano_papel,
+            mostrar_logo: data.ticket_config.mostrar_logo,
+            mostrar_rif: data.ticket_config.mostrar_rif,
+            texto_cabecera: data.ticket_config.texto_cabecera ?? "",
+            texto_pie: data.ticket_config.texto_pie ?? "",
+            desglosar_impuestos: data.ticket_config.desglosar_impuestos,
+          });
+        }
+      })
+      .catch(() => {});
 
     cargarColaClientes();
     const interval = setInterval(cargarColaClientes, 10000); // refresh client queue every 10 seconds
@@ -566,6 +748,97 @@ export default function ModuloCaja() {
     cargarColaClientes();
   }
 
+  // Guarda el carrito activo (cliente, ítems, cantidades y precios modificados) como un
+  // ticket en espera y limpia la pantalla para atender al siguiente cliente sin perderlo.
+  function guardarTicketEnEspera() {
+    if (!cliente) return;
+    const nuevo: TicketSuspendido = {
+      id: `susp_${Date.now()}`,
+      cliente,
+      carrito,
+      ticketsSeleccionados,
+      ticketModificaciones,
+      guardadoEn: new Date().toISOString(),
+    };
+    setTicketsSuspendidos((prev) => [nuevo, ...prev]);
+    cerrarTicket();
+  }
+
+  // Recupera un ticket suspendido al carrito activo. Refresca los tickets pendientes de
+  // balanza del cliente desde el backend y luego reaplica la selección/modificaciones que
+  // tenía el cajero al momento de suspenderlo.
+  async function recuperarTicketSuspendido(id: string) {
+    const item = ticketsSuspendidos.find((t) => t.id === id);
+    if (!item) return;
+
+    setCliente(item.cliente);
+    setMostrarRegistro(false);
+    setCedulaInput(item.cliente.cedula);
+    setCarrito(item.carrito);
+
+    await cargarTicketsPendientes(item.cliente.id);
+    setTicketsSeleccionados(item.ticketsSeleccionados);
+    setTicketModificaciones(item.ticketModificaciones);
+    cargarHistorialCompras(item.cliente.id);
+    cargarEncuestasPendientes(item.cliente.id);
+
+    setTicketsSuspendidos((prev) => prev.filter((t) => t.id !== id));
+    setMostrarTicketsSuspendidos(false);
+  }
+
+  // Descarta definitivamente un ticket en espera (no recuperable)
+  function descartarTicketSuspendido(id: string) {
+    setTicketsSuspendidos((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  // Trae las líneas de venta procesadas hoy para el historial reimprimible del POS
+  async function cargarHistorialVentasDia() {
+    setCargandoHistorialVentas(true);
+    try {
+      const { data } = await apiClient.get<VentaHistorialItem[]>("/api/v1/tickets", {
+        params: { status: "procesado" },
+      });
+      const hoy = new Date().toDateString();
+      const deHoy = data
+        .filter((t) => new Date(t.created_at).toDateString() === hoy)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setHistorialVentasDia(deHoy);
+    } catch (err) {
+      console.error("Error al cargar historial de ventas del día:", err);
+    } finally {
+      setCargandoHistorialVentas(false);
+    }
+  }
+
+  function toggleHistorialVentas() {
+    setMostrarHistorialVentas((v) => {
+      if (!v) cargarHistorialVentasDia();
+      return !v;
+    });
+  }
+
+  // Aísla y reimprime un ticket histórico vía window.print(), sin alterar la venta
+  // (carrito/cliente) que el cajero tenga abierta en pantalla en este instante.
+  function reimprimirTicketHistorial(ticket: VentaHistorialItem) {
+    const producto = dbProductos.find((p) => p.id === ticket.producto_id);
+    const nombreProducto = producto ? producto.nombre : `Producto #${ticket.producto_id}`;
+    setTicketReimprimirDatos({
+      nombreComercial: empresaTicketInfo.nombre_comercial,
+      rif: empresaTicketInfo.rif,
+      logoUrl: empresaTicketInfo.logo_url,
+      facturaNum: ticket.id,
+      fecha: new Date(ticket.created_at).toLocaleString("es-VE", {
+        day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
+      }),
+      clienteName: ticket.cliente ?? "Cliente",
+      clienteCedula: "—",
+      metodoPago: "—",
+      lineas: [{ label: nombreProducto, monto: ticket.monto_usd }],
+      totalUsd: ticket.monto_usd,
+      totalVes: ticket.monto_ves,
+    });
+  }
+
   // Final check-out execution
   async function procesarCobroFinal() {
     if (!cliente) return;
@@ -573,6 +846,24 @@ export default function ModuloCaja() {
     setError("");
 
     try {
+      // 0. Lee la configuración de ticket vigente del inquilino antes de emitir el comprobante
+      try {
+        const { data } = await apiClient.get("/api/v1/empresa/mi-config");
+        setEmpresaTicketInfo({ nombre_comercial: data.nombre_comercial, rif: data.rif, logo_url: data.logo_url ?? null });
+        if (data.ticket_config) {
+          setTicketConfig({
+            tamano_papel: data.ticket_config.tamano_papel,
+            mostrar_logo: data.ticket_config.mostrar_logo,
+            mostrar_rif: data.ticket_config.mostrar_rif,
+            texto_cabecera: data.ticket_config.texto_cabecera ?? "",
+            texto_pie: data.ticket_config.texto_pie ?? "",
+            desglosar_impuestos: data.ticket_config.desglosar_impuestos,
+          });
+        }
+      } catch {
+        // Si falla, se imprime con la última configuración conocida (cargada al montar el módulo)
+      }
+
       // 1. Process shelf items (if any in cart)
       if (carrito.length > 0) {
         const items = carrito.map(item => ({
@@ -581,7 +872,8 @@ export default function ModuloCaja() {
         }));
         await apiClient.post("/api/v1/tickets", {
           cliente_id: cliente.id,
-          items: items
+          items: items,
+          metodo_pago: metodoPago
         });
       }
 
@@ -595,7 +887,8 @@ export default function ModuloCaja() {
           }));
         await apiClient.post("/api/v1/tickets/procesar-pago", {
           ticket_ids: ticketsSeleccionados,
-          modificaciones: mods.length > 0 ? mods : undefined
+          modificaciones: mods.length > 0 ? mods : undefined,
+          metodo_pago: metodoPago
         });
       }
 
@@ -673,6 +966,34 @@ export default function ModuloCaja() {
       prev
         .map((i) => (i.id === id ? { ...i, cantidad: i.cantidad + delta } : i))
         .filter((i) => i.cantidad > 0)
+    );
+  }
+
+  // Edición directa del input numérico de cantidad: respeta el mínimo según la unidad
+  // (1 unidad entera para "u", 0.001 kg para "kg") y recalcula totales al instante
+  // porque carrito es el único estado de origen de totalCarritoUsd/totalUsd.
+  function actualizarCantidadCarrito(id: string, nuevaCantidad: number) {
+    if (Number.isNaN(nuevaCantidad)) return;
+    setCarrito((prev) =>
+      prev.map((i) => {
+        if (i.id !== id) return i;
+        const minimo = i.unidad === "kg" ? 0.001 : 1;
+        return { ...i, cantidad: Math.max(nuevaCantidad, minimo) };
+      })
+    );
+  }
+
+  // Elimina el ítem definitivamente del carrito, sin pasar por el mínimo de cantidad
+  function eliminarDelCarrito(id: string) {
+    setCarrito((prev) => prev.filter((i) => i.id !== id));
+  }
+
+  // Edición manual del precio unitario "en caliente", solo para esta venta en curso.
+  // totalCarritoUsd/totalUsd se recalculan solos en cada render porque derivan de carrito.
+  function actualizarPrecioCarrito(id: string, nuevoPrecio: number) {
+    if (Number.isNaN(nuevoPrecio)) return;
+    setCarrito((prev) =>
+      prev.map((i) => (i.id === id ? { ...i, precio: Math.max(nuevoPrecio, 0) } : i))
     );
   }
 
@@ -767,6 +1088,67 @@ export default function ModuloCaja() {
     (p) => normalizeDept(p.linea) === tabPesado
   );
 
+  // --- Interceptor de Turno: bloquea TODO el POS hasta verificar/abrir el turno de caja ---
+  if (cargandoTurno) {
+    return (
+      <div className="flex h-full items-center justify-center p-12">
+        <p className="text-sm text-slate-400 animate-pulse">Verificando turno de caja...</p>
+      </div>
+    );
+  }
+
+  if (!turnoActivo) {
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="w-full max-w-md rounded-3xl border border-slate-100 bg-white p-8 shadow-xl space-y-5">
+          <div className="text-center space-y-1">
+            <span className="text-4xl">🔒</span>
+            <h2 className="text-2xl font-black tracking-tight text-slate-900">Apertura de Caja</h2>
+            <p className="text-sm text-slate-500">Debes registrar el fondo de caja inicial para activar el POS.</p>
+          </div>
+
+          {errorApertura && <p className="text-sm font-medium text-red-600 text-center">{errorApertura}</p>}
+
+          <label className="flex flex-col">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Fondo de Caja Inicial (USD)</span>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={fondoInicialUsd}
+              onChange={(e) => setFondoInicialUsd(e.target.value)}
+              placeholder="0.00"
+              autoFocus
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+
+          <label className="flex flex-col">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Fondo de Caja Inicial (Bs.)</span>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={fondoInicialVes}
+              onChange={(e) => setFondoInicialVes(e.target.value)}
+              placeholder="0.00"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={abrirTurno}
+            disabled={abriendoTurno}
+            className="w-full rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white transition-all duration-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {abriendoTurno ? "Abriendo Turno..." : "Abrir Turno e Iniciar Ventas"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!cliente) {
     return (
       <div className="max-w-6xl mx-auto p-6 space-y-6">
@@ -794,6 +1176,20 @@ export default function ModuloCaja() {
           <div className="mt-3 md:mt-0 flex items-center gap-2">
             <button
               type="button"
+              onClick={abrirModalArqueo}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all uppercase tracking-wider"
+            >
+              🧮 Cerrar Turno / Arqueo
+            </button>
+            <button
+              type="button"
+              onClick={() => setMostrarTicketsSuspendidos(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-50 hover:bg-amber-600 text-amber-700 hover:text-white border border-amber-100 hover:border-amber-600 font-bold text-xs rounded-xl transition-all uppercase tracking-wider"
+            >
+              📥 Tickets Guardados ({ticketsSuspendidos.length})
+            </button>
+            <button
+              type="button"
               onClick={() => setMostrarSolicitarDesposte(true)}
               className="flex items-center gap-2 px-4 py-2 bg-violet-50 hover:bg-violet-600 text-violet-700 hover:text-white border border-violet-100 hover:border-violet-600 font-bold text-xs rounded-xl transition-all uppercase tracking-wider"
             >
@@ -809,6 +1205,51 @@ export default function ModuloCaja() {
               {cargandoCola ? "Actualizando..." : "Actualizar Cola"}
             </button>
           </div>
+        </div>
+
+        {/* Historial de Ventas del día (colapsable, con reimpresión aislada) */}
+        <div className="rounded-3xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+          <button
+            type="button"
+            onClick={toggleHistorialVentas}
+            className="w-full flex justify-between items-center px-5 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider hover:bg-slate-50 transition-colors"
+          >
+            <span>📊 Historial de Ventas ({historialVentasDia.length})</span>
+            <span>{mostrarHistorialVentas ? "▲" : "▼"}</span>
+          </button>
+          {mostrarHistorialVentas && (
+            <div className="border-t border-slate-100 divide-y divide-slate-50 max-h-72 overflow-y-auto">
+              {cargandoHistorialVentas ? (
+                <p className="text-xs text-slate-400 text-center py-6">Cargando ventas del día...</p>
+              ) : historialVentasDia.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-6">Sin ventas procesadas hoy todavía.</p>
+              ) : (
+                historialVentasDia.map((t) => (
+                  <div key={t.id} className="flex items-center justify-between gap-3 px-5 py-2.5 text-xs">
+                    <div>
+                      <span className="font-bold text-slate-700">Ticket #{t.id}</span>
+                      <span className="text-slate-400 ml-2">
+                        {new Date(t.created_at).toLocaleTimeString("es-VE", { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono font-semibold text-slate-700">${fmt(t.monto_usd)}</span>
+                      <span className="font-mono text-[10px] text-slate-400">Bs. {fmt(t.monto_ves)}</span>
+                      <button
+                        type="button"
+                        onClick={() => reimprimirTicketHistorial(t)}
+                        title="Reimprimir ticket"
+                        aria-label={`Reimprimir ticket #${t.id}`}
+                        className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                      >
+                        🖨️
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
@@ -928,6 +1369,156 @@ export default function ModuloCaja() {
             )}
           </div>
         </div>
+
+        {/* --- Modal: Cerrar Turno / Arqueo de Caja --- */}
+        {mostrarArqueo && turnoActivo && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setMostrarArqueo(false)}>
+            <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto bg-white rounded-3xl border border-slate-200 shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-xl font-black tracking-tight text-slate-900">🧮 Arqueo de Caja</h3>
+                <button
+                  type="button"
+                  onClick={() => setMostrarArqueo(false)}
+                  title="Cerrar"
+                  aria-label="Cerrar"
+                  className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200 hover:text-slate-900 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-xs text-slate-400 mb-4">Turno #{turnoActivo.id} · Abierto {new Date(turnoActivo.fecha_apertura).toLocaleString("es-VE")}</p>
+
+              {errorArqueo && <p className="text-sm font-medium text-red-600 mb-3">{errorArqueo}</p>}
+
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 space-y-2 mb-4">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Monto Esperado en Caja (por método)</p>
+                {turnoActivo.desglose_metodos.map((linea) => (
+                  <div key={linea.metodo_pago} className="flex justify-between text-sm">
+                    <span className="text-slate-600">{linea.metodo_pago}</span>
+                    <span className="font-mono font-semibold text-slate-800">
+                      {linea.metodo_pago === "Efectivo Bs" ? `Bs. ${fmt(linea.monto_ves)}` : `$${fmt(linea.monto_usd)}`}
+                    </span>
+                  </div>
+                ))}
+                <div className="border-t border-slate-200 pt-2 flex justify-between text-sm font-black text-slate-900">
+                  <span>Total Esperado</span>
+                  <span>${fmt(turnoActivo.monto_esperado_usd)} · Bs. {fmt(turnoActivo.monto_esperado_ves)}</span>
+                </div>
+              </div>
+
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Conteo Físico Real (gaveta)</p>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {METODOS_PAGO.map((metodo) => (
+                  <label key={metodo} className="flex flex-col">
+                    <span className="text-xs font-semibold text-slate-500">{metodo}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      required
+                      value={conteoReal[metodo]}
+                      onChange={(e) => actualizarConteoReal(metodo, e.target.value)}
+                      placeholder="0.00"
+                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                ))}
+              </div>
+
+              {(() => {
+                const { realUsd, realVes } = calcularRealUsdVes();
+                const descuadreUsd = realUsd - turnoActivo.monto_esperado_usd;
+                const descuadreVes = realVes - turnoActivo.monto_esperado_ves;
+                const fmtDescuadre = (v: number) => (v < 0 ? `Faltante: -$${fmt(Math.abs(v))}` : v > 0 ? `Sobrante: +$${fmt(v)}` : "Cuadrado: $0.00");
+                const fmtDescuadreVes = (v: number) => (v < 0 ? `Faltante: -Bs. ${fmt(Math.abs(v))}` : v > 0 ? `Sobrante: +Bs. ${fmt(v)}` : "Cuadrado: Bs. 0.00");
+                return (
+                  <div className="rounded-2xl border border-slate-100 bg-white p-4 space-y-1.5 mb-4">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">Diferencia USD:</span>
+                      <span className={`font-black ${descuadreUsd === 0 ? "text-emerald-600" : "text-rose-600"}`}>{fmtDescuadre(descuadreUsd)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">Diferencia VES:</span>
+                      <span className={`font-black ${descuadreVes === 0 ? "text-emerald-600" : "text-rose-600"}`}>{fmtDescuadreVes(descuadreVes)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <button
+                type="button"
+                onClick={cerrarTurnoConArqueo}
+                disabled={cerrandoTurno}
+                className="w-full rounded-2xl bg-rose-600 hover:bg-rose-700 py-3 text-sm font-bold text-white transition-all duration-300 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {cerrandoTurno ? "Cerrando Turno..." : "Confirmar Cierre e Imprimir Arqueo"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Comprobante de arqueo oculto en pantalla: visible solo al imprimir */}
+        {ticketArqueoImprimir && (
+          <div className="ticket-imprimible ticket-oculto-pantalla">
+            <TicketArqueoCaja tamanoPapel={ticketConfig.tamano_papel} turno={ticketArqueoImprimir} />
+          </div>
+        )}
+
+        {/* --- Modal: Tickets Guardados / Suspendidos --- */}
+        {mostrarTicketsSuspendidos && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setMostrarTicketsSuspendidos(false)}>
+            <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto bg-white rounded-3xl border border-slate-200 shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-black tracking-tight text-slate-900">📥 Tickets Guardados</h3>
+                <button
+                  type="button"
+                  onClick={() => setMostrarTicketsSuspendidos(false)}
+                  title="Cerrar"
+                  aria-label="Cerrar"
+                  className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200 hover:text-slate-900 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {ticketsSuspendidos.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No hay tickets en espera.</p>
+              ) : (
+                <div className="space-y-3">
+                  {ticketsSuspendidos.map((t) => {
+                    const totalSuspendido = t.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
+                    return (
+                      <div key={t.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-bold text-slate-800 text-sm">{t.cliente.nombre}</p>
+                          <p className="text-[10px] text-slate-400">
+                            {t.carrito.length} ítem(s) · ${fmt(totalSuspendido)} · guardado {new Date(t.guardadoEn).toLocaleTimeString("es-VE", { hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => recuperarTicketSuspendido(t.id)}
+                            className="rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-2 transition-colors"
+                          >
+                            Recuperar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => descartarTicketSuspendido(t.id)}
+                            className="rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold px-3 py-2 transition-colors"
+                          >
+                            Descartar
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1040,9 +1631,20 @@ export default function ModuloCaja() {
         <section className="rounded-2xl border border-slate-100 bg-white shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden">
           <div className="border-b border-slate-100 bg-slate-50/50 px-6 py-4 flex items-center justify-between">
             <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider">🛒 Artículos de Estante</h3>
-            <span className="bg-blue-50 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded-full">
-              {carrito.length} Items
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="bg-blue-50 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                {carrito.length} Items
+              </span>
+              <button
+                type="button"
+                onClick={guardarTicketEnEspera}
+                disabled={carrito.length === 0 && ticketsSeleccionados.length === 0}
+                title="Guardar este carrito en espera y atender a otro cliente"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-600 text-amber-700 hover:text-white border border-amber-100 hover:border-amber-600 font-bold text-[10px] rounded-full transition-all uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-amber-50 disabled:hover:text-amber-700"
+              >
+                📥 Guardar en Espera
+              </button>
+            </div>
           </div>
 
           {carrito.length === 0 ? (
@@ -1055,6 +1657,7 @@ export default function ModuloCaja() {
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Cantidad</th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Precio USD</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">Subtotal USD</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1062,39 +1665,65 @@ export default function ModuloCaja() {
                   <tr key={i.id} className="hover:bg-slate-50/20">
                     <td className="px-4 py-3 font-medium text-slate-700">{i.nombre}</td>
                     <td className="px-4 py-3">
-                      {i.unidad === "kg" ? (
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-slate-700">{fmtKg(i.cantidad)} Kg</span>
-                          <button
-                            type="button"
-                            onClick={() => ajustarCantidad(i.id, -i.cantidad)}
-                            className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition-colors duration-200 hover:bg-slate-200"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => ajustarCantidad(i.id, -1)}
-                            className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition-colors duration-200 hover:bg-slate-200"
-                          >
-                            −
-                          </button>
-                          <span className="w-6 text-center font-mono">{i.cantidad}</span>
-                          <button
-                            type="button"
-                            onClick={() => ajustarCantidad(i.id, 1)}
-                            className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition-colors duration-200 hover:bg-slate-200"
-                          >
-                            +
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => ajustarCantidad(i.id, i.unidad === "kg" ? -0.1 : -1)}
+                          title="Disminuir cantidad"
+                          aria-label="Disminuir cantidad"
+                          className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition-colors duration-200 hover:bg-slate-200"
+                        >
+                          −
+                        </button>
+                        <input
+                          type="number"
+                          min={i.unidad === "kg" ? 0.001 : 1}
+                          step={i.unidad === "kg" ? 0.001 : 1}
+                          value={i.unidad === "kg" ? fmtKg(i.cantidad) : i.cantidad}
+                          onChange={(e) => actualizarCantidadCarrito(i.id, Number(e.target.value))}
+                          className="w-16 rounded-lg border border-slate-200 px-1.5 py-1 text-center font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          aria-label={`Cantidad de ${i.nombre}`}
+                        />
+                        {i.unidad === "kg" && <span className="text-xs text-slate-400">Kg</span>}
+                        <button
+                          type="button"
+                          onClick={() => ajustarCantidad(i.id, i.unidad === "kg" ? 0.1 : 1)}
+                          title="Aumentar cantidad"
+                          aria-label="Aumentar cantidad"
+                          className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition-colors duration-200 hover:bg-slate-200"
+                        >
+                          +
+                        </button>
+                      </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-600">${fmt(i.precio)}{i.unidad === "kg" ? " / Kg" : ""}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      <div className="flex items-center gap-1">
+                        <span>$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={i.precio}
+                          onChange={(e) => actualizarPrecioCarrito(i.id, Number(e.target.value))}
+                          title="Editar precio unitario solo para esta venta"
+                          aria-label={`Precio unitario de ${i.nombre}`}
+                          className="w-20 rounded-lg border border-slate-200 px-1.5 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        {i.unidad === "kg" && <span className="text-[10px] text-slate-400">/Kg</span>}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">${fmt(i.precio * i.cantidad)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => eliminarDelCarrito(i.id)}
+                        title="Eliminar del carrito"
+                        aria-label={`Eliminar ${i.nombre} del carrito`}
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-50 text-rose-600 transition-colors duration-200 hover:bg-rose-100 ml-auto"
+                      >
+                        🗑️
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1548,88 +2177,42 @@ export default function ModuloCaja() {
               Transacción Exitosa
             </div>
 
-            <div className="border border-slate-200 rounded-2xl p-5 mt-4 bg-slate-50 border-dashed space-y-4">
-              <div className="text-center">
-                <h4 className="font-black text-slate-800 text-base">MINIMARKET EL VAIVÉN</h4>
-                <p className="text-[9px] text-slate-400 tracking-wider">TICKET DE FACTURACIÓN NRO: {pagoCompletadoData.facturaNum}</p>
-                <p className="text-[8px] text-slate-400">FECHA: {pagoCompletadoData.fecha} · MÓDULO: CAJA POS</p>
-              </div>
-
-              {/* Client information */}
-              <div className="text-xs space-y-1 bg-white border border-slate-100 p-3 rounded-xl">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Cliente:</span>
-                  <span className="text-slate-800 font-bold">{pagoCompletadoData.clienteName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Cédula:</span>
-                  <span className="text-slate-800 font-mono">{pagoCompletadoData.clienteCedula}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Método de Pago:</span>
-                  <span className="text-slate-800 font-semibold">{pagoCompletadoData.metodoPago}</span>
-                </div>
-              </div>
-
-              {/* Breakdown by department / section */}
-              <div className="text-xs space-y-2 border-t border-slate-200/60 pt-3 font-medium">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Desglose de Compra</p>
-                
-                {pagoCompletadoData.totalCarritoUsd > 0 && (
-                  <div className="flex justify-between text-slate-600">
-                    <span>🛒 Artículos de Estante:</span>
-                    <span className="font-mono">${fmt(pagoCompletadoData.totalCarritoUsd)}</span>
-                  </div>
-                )}
-
-                {Object.entries(pagoCompletadoData.porDepartamento).map(([dept, total]) => {
-                  if ((total as number) <= 0) return null;
-                  const emoji = dept === "Carnicería" ? "🥩" : dept === "Verdulería" ? "🍅" : dept === "Charcutería" ? "🧀" : "📦";
-                  return (
-                    <div key={dept} className="flex justify-between text-slate-600 pl-2">
-                      <span>{emoji} Pedidos {dept}:</span>
-                      <span className="font-mono">${fmt(total as number)}</span>
-                    </div>
-                  );
-                })}
-
-                <div className="flex justify-between border-t border-slate-200/60 pt-2 text-slate-800 text-sm font-bold">
-                  <span>TOTAL COBRADO USD:</span>
-                  <span className="text-emerald-600 font-black font-mono">${fmt(pagoCompletadoData.totalUsd)}</span>
-                </div>
-                <div className="flex justify-between text-slate-500 text-[10px] font-mono">
-                  <span>TOTAL COBRADO VES:</span>
-                  <span>Bs. {fmt(pagoCompletadoData.totalVes)}</span>
-                </div>
-
-                <div className="flex justify-between border-t border-slate-200/40 pt-1.5 text-xs text-slate-600">
-                  <span>Monto Recibido:</span>
-                  <span className="font-mono">
-                    {pagoCompletadoData.metodoPago === "Efectivo Bs" ? "Bs. " : "$"}
-                    {fmt(pagoCompletadoData.montoRecibido)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-xs text-slate-600">
-                  <span>Vuelto:</span>
-                  <span className="text-emerald-600 font-bold font-mono">
-                    {pagoCompletadoData.metodoPago === "Efectivo Bs" ? "Bs. " : "$"}
-                    {fmt(pagoCompletadoData.vuelto)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Barcode representation */}
-              <div className="flex flex-col items-center py-2 bg-white rounded-xl border border-slate-100">
-                <div className="flex justify-center gap-0.5 h-8 w-44 items-stretch">
-                  {[...Array(20)].map((_, idx) => {
-                    const width = (idx % 2 === 0) ? "w-1" : (idx % 5 === 0) ? "w-1.5" : "w-[2px]";
-                    return <div key={idx} className={`${width} bg-slate-800`}></div>;
-                  })}
-                </div>
-              </div>
+            <div className="mt-4 ticket-imprimible">
+              <TicketTermico
+                config={ticketConfig}
+                datos={{
+                  nombreComercial: empresaTicketInfo.nombre_comercial,
+                  rif: empresaTicketInfo.rif,
+                  logoUrl: empresaTicketInfo.logo_url,
+                  facturaNum: pagoCompletadoData.facturaNum,
+                  fecha: pagoCompletadoData.fecha,
+                  clienteName: pagoCompletadoData.clienteName,
+                  clienteCedula: pagoCompletadoData.clienteCedula,
+                  metodoPago: pagoCompletadoData.metodoPago,
+                  lineas: [
+                    ...(pagoCompletadoData.totalCarritoUsd > 0
+                      ? [{ label: "🛒 Artículos de Estante", monto: pagoCompletadoData.totalCarritoUsd }]
+                      : []),
+                    ...Object.entries(pagoCompletadoData.porDepartamento)
+                      .filter(([, total]) => (total as number) > 0)
+                      .map(([dept, total]) => ({ label: `Pedidos ${dept}`, monto: total as number })),
+                  ],
+                  totalUsd: pagoCompletadoData.totalUsd,
+                  totalVes: pagoCompletadoData.totalVes,
+                  montoRecibido: pagoCompletadoData.montoRecibido,
+                  vuelto: pagoCompletadoData.vuelto,
+                }}
+              />
             </div>
 
             <div className="mt-4 space-y-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="w-full bg-slate-700 hover:bg-slate-800 text-white rounded-2xl py-3 text-sm font-bold transition-all shadow-md"
+              >
+                🖨️ Imprimir Ticket
+              </button>
               <button
                 type="button"
                 onClick={() => setMostrarEnvioDelivery(true)}
@@ -1759,6 +2342,14 @@ export default function ModuloCaja() {
             </div>
 
           </div>
+        </div>
+      )}
+
+      {/* Reimpresión aislada de un ticket del historial: oculto en pantalla, visible solo
+          al imprimir (.ticket-imprimible). No toca el carrito/cliente activo en pantalla. */}
+      {ticketReimprimirDatos && (
+        <div className="ticket-imprimible ticket-oculto-pantalla">
+          <TicketTermico config={ticketConfig} datos={ticketReimprimirDatos} />
         </div>
       )}
 

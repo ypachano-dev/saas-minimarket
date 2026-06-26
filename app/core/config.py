@@ -2,7 +2,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Variables de entorno con valores por defecto para desarrollo local
-    PROJECT_NAME: str = "Orquestador ERP/CRM SaaS"
+    PROJECT_NAME: str = "3Q Nexus ERP"
+    PROVEEDOR: str = "3Q Solutions"
     API_V1_STR: str = "/api/v1"
     
     # Configuración de Seguridad (Llave secreta para JWT tokens)

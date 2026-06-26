@@ -121,3 +121,30 @@
   border-color: rgba(124, 58, 237, 0.6);
 }
 
+/* Mantiene un TicketTermico montado fuera de la vista en pantalla (para
+   reimpresión desde el historial) sin afectar el layout visible. El bloque
+   @media print de abajo lo reposiciona y lo hace visible solo al imprimir. */
+.ticket-oculto-pantalla {
+  position: fixed;
+  top: 0;
+  left: -9999px;
+}
+
+/* Impresión nativa de la ticketera: al imprimir, oculta todo excepto el
+   TicketTermico marcado con .ticket-imprimible (botón "Imprimir Ticket"). */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .ticket-imprimible,
+  .ticket-imprimible * {
+    visibility: visible;
+  }
+  .ticket-imprimible {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: auto;
+  }
+}
+

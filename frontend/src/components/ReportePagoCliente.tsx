@@ -1,6 +1,7 @@
 import { useState, type DragEvent, type FormEvent } from "react";
 import apiClient from "../api/client";
 import { useSuscripcion, setSuscripcion } from "../state/suscripcion";
+import { APP_NAME } from "../config/brand";
 
 const METODOS = ["Pago Móvil Banesco", "Transferencia Banco de Venezuela", "Efectivo $", "Custodia"];
 
@@ -58,7 +59,7 @@ export default function ReportePagoCliente({ onClose }: { onClose?: () => void }
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-2xl">⏳</div>
         <h3 className="mt-4 text-xl font-black tracking-tight text-slate-900">Esperando Aprobación del Administrador</h3>
         <p className="mt-2 text-sm text-slate-500">
-          Tu reporte de pago fue recibido y está pendiente de revisión por el equipo de SaaS MiniMarket. Una vez aprobado, tu suscripción se extenderá automáticamente.
+          Tu reporte de pago fue recibido y está pendiente de revisión por el equipo de {APP_NAME}. Una vez aprobado, tu suscripción se extenderá automáticamente.
         </p>
         {onClose && (
           <button

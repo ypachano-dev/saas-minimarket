@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import apiClient from "../api/client";
+import { APP_NAME, FIRMA_PROVEEDOR } from "../config/brand";
 
 interface LoginProps {
   onLogin: () => void;
@@ -50,6 +51,7 @@ export default function Login({ onLogin }: LoginProps) {
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
       <div className="w-full max-w-md rounded-3xl bg-white p-8 border border-slate-100 shadow-xl space-y-6">
         <div className="space-y-1 text-center">
+          <p className="text-sm font-black tracking-tight text-brand-primary">{APP_NAME}</p>
           <h2 className="text-2xl font-black tracking-tight text-slate-900">Portal de Acceso Corporativo</h2>
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">ERP & CRM MULTI-INQUILINO (SaaS)</p>
         </div>
@@ -93,6 +95,8 @@ export default function Login({ onLogin }: LoginProps) {
             {cargando ? "Autenticando..." : "Ingresar"}
           </button>
         </form>
+
+        <p className="text-center text-[10px] font-medium text-slate-400 tracking-wide">{FIRMA_PROVEEDOR}</p>
       </div>
     </div>
   );

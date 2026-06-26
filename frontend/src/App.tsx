@@ -20,7 +20,9 @@ import ModuloCartera from "./components/ModuloCartera";
 import ModuloEstadisticas from "./components/ModuloEstadisticas";
 import ModuloVisitas from "./components/ModuloVisitas";
 import ModuloRutas from "./components/ModuloRutas";
+import ConfiguracionTienda from "./components/ConfiguracionTienda";
 import apiClient from "./api/client";
+import { FIRMA_PROVEEDOR } from "./config/brand";
 
 // Decodifica el claim "rol" del JWT sin librerías externas
 function getRolFromToken(): string | null {
@@ -56,9 +58,17 @@ export default function App() {
   const [branding, setBranding] = useState<{
     tipo_negocio: string;
     nombre_comercial: string;
+    nombre_corto?: string | null;
+    logo_url?: string | null;
     color_primario?: string;
     color_secundario?: string;
     modulos_habilitados?: string[];
+    nomenclatura?: {
+      suite: string;
+      inventario: string;
+      item_inventario: string;
+      venta: string;
+    };
   } | null>(null);
 
   const rol = getRolFromToken();
@@ -68,6 +78,7 @@ export default function App() {
   const esModuloValido = (() => {
     if (view === "dashboard") return true;
     if (view === "consola") return rol === "propietario";
+    if (view === "configuracion") return rol === "admin" || rol === "propietario";
     if (rol === "repartidor") return view === "delivery";
     if (rol === "vendedor") {
       const allowedVendedorKeys = ["dashboard", "visitas", "rutas", "ficha"];
@@ -152,6 +163,7 @@ export default function App() {
               Verificando credenciales y módulos de la empresa...
             </p>
           </div>
+          <p className="text-[10px] text-slate-600 tracking-wide">{FIRMA_PROVEEDOR}</p>
         </div>
       </div>
     );
@@ -177,6 +189,8 @@ export default function App() {
           rol={rol}
           tipoNegocio={branding?.tipo_negocio}
           nombreEmpresa={branding?.nombre_comercial}
+          nombreCorto={branding?.nombre_corto}
+          logoUrl={branding?.logo_url}
           modulosHabilitados={modulosHabilitados}
         />
         <main className="flex-1 overflow-y-auto">
@@ -199,8 +213,9 @@ export default function App() {
           {view === "estadisticas" && <ModuloEstadisticas />}
           {view === "visitas" && <ModuloVisitas />}
           {view === "rutas" && <ModuloRutas rol={rol} />}
+          {view === "configuracion" && <ConfiguracionTienda />}
 
-          {!["dashboard", "delivery", "almacen", "ingreso", "crm", "ficha", "pos", "consola", "pedidos", "balanza", "tesoreria", "cuentas", "estadisticas", "visitas", "rutas"].includes(view) && (
+          {!["dashboard", "delivery", "almacen", "ingreso", "crm", "ficha", "pos", "consola", "pedidos", "balanza", "tesoreria", "cuentas", "estadisticas", "visitas", "rutas", "configuracion"].includes(view) && (
             <div className="p-6">
               <PlaceholderModulo titulo={modulo.label} pendientes={modulo.pendientes ?? []} />
             </div>
