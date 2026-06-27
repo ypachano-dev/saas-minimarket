@@ -2,6 +2,93 @@ import { useEffect, useState, useMemo, type FormEvent } from "react";
 import apiClient from "../api/client";
 import AgentPanel from "./AgentPanel";
 
+// Normaliza un teléfono venezolano a formato internacional E.164 sin '+' (requerido
+// por wa.me): si empieza en '0' (ej. 04246047869) se reemplaza por '58'; si no
+// trae código de país, se le antepone '58'.
+function normalizarTelefonoVE(telefono: string): string {
+  const limpio = telefono.replace(/\D/g, "");
+  if (limpio.startsWith("58")) return limpio;
+  if (limpio.startsWith("0")) return `58${limpio.slice(1)}`;
+  return `58${limpio}`;
+}
+
+// Enlace de WhatsApp con el teléfono normalizado y el mensaje codificado de forma
+// estricta con encodeURIComponent para que emojis y saltos de línea no se rompan.
+function construirEnlaceWhatsApp(telefono: string, mensaje: string): string {
+  return `https://wa.me/${normalizarTelefonoVE(telefono)}?text=${encodeURIComponent(mensaje)}`;
+}
+
+// Instagram no soporta prellenar texto en su enlace de DM público; por eso este
+// botón además copia el mensaje al portapapeles antes de abrir la bandeja.
+function construirEnlaceInstagramDM(instagram: string): string {
+  const handle = instagram.replace(/^@/, "").trim();
+  return `https://ig.me/m/${handle}`;
+}
+
+// Botones de despacho omnicanal para un mensaje generado por ALO: Copiar siempre
+// disponible; WhatsApp si el cliente tiene teléfono; Instagram DM si tiene
+// instagram; TikTok siempre disponible como copia de guion (no requiere canal).
+function BotonesOmnicanal({
+  telefono,
+  instagram,
+  mensaje,
+  copiado,
+  onCopiar,
+}: {
+  telefono?: string | null;
+  instagram?: string | null;
+  mensaje: string;
+  copiado: boolean;
+  onCopiar: () => void;
+}) {
+  function copiarParaTikTok() {
+    navigator.clipboard.writeText(mensaje);
+  }
+
+  function copiarYAbrirInstagram() {
+    navigator.clipboard.writeText(mensaje);
+    window.open(construirEnlaceInstagramDM(instagram!), "_blank", "noopener,noreferrer");
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={onCopiar}
+        className="text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-full transition-all"
+      >
+        {copiado ? "✓ Copiado" : "📋 Copiar"}
+      </button>
+      {telefono && (
+        <a
+          href={construirEnlaceWhatsApp(telefono, mensaje)}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-full transition-all"
+        >
+          💬 Enviar por WhatsApp
+        </a>
+      )}
+      {instagram && (
+        <button
+          type="button"
+          onClick={copiarYAbrirInstagram}
+          className="text-[11px] font-bold bg-gradient-to-r from-fuchsia-600 to-amber-500 hover:from-fuchsia-700 hover:to-amber-600 text-white px-3 py-1.5 rounded-full transition-all"
+        >
+          📸 Enviar DM Instagram
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={copiarParaTikTok}
+        className="text-[11px] font-bold bg-slate-900 hover:bg-black text-cyan-400 px-3 py-1.5 rounded-full transition-all"
+      >
+        🎵 Copiar Guion para TikTok
+      </button>
+    </div>
+  );
+}
+
 interface Cliente {
   id: number;
   cedula: string;
@@ -98,7 +185,38 @@ interface MensajeCampana {
   cliente_id: number;
   nombre: string;
   telefono: string | null;
+  instagram: string | null;
   mensaje: string;
+}
+
+interface ProductoLite {
+  id: number;
+  nombre: string;
+  linea: string | null;
+  stock_total: number;
+}
+
+interface OfertaProductoForm {
+  producto_id: number;
+  producto_nombre: string;
+  oferta: string;
+}
+
+interface CandidatoProducto {
+  cliente_id: number;
+  nombre: string;
+  telefono: string | null;
+  instagram: string | null;
+  productos_ofertados: string[];
+  compro_antes: boolean;
+  sin_quejas_rubro: boolean;
+  mensaje: string;
+}
+
+interface CampanaProductoResultado {
+  fuente: string;
+  total_candidatos: number;
+  generados: CandidatoProducto[];
 }
 
 const badgeEnvio: Record<string, string> = {
@@ -149,6 +267,16 @@ export default function ModuloCRM() {
   const [resultadoCampana, setResultadoCampana] = useState<{ segmento: string; fuente: string; mensajes: MensajeCampana[] } | null>(null);
   const [copiadoCampanaId, setCopiadoCampanaId] = useState<number | null>(null);
 
+  // --- Campaña por Producto/Oferta: ofertar uno o varios productos (ej. exceso de
+  // stock) a los clientes con más probabilidad de interés, en un solo mensaje ---
+  const [productosDisponibles, setProductosDisponibles] = useState<ProductoLite[]>([]);
+  const [productoSel, setProductoSel] = useState<number | "">("");
+  const [ofertaTexto, setOfertaTexto] = useState("");
+  const [ofertasProducto, setOfertasProducto] = useState<OfertaProductoForm[]>([]);
+  const [generandoCampanaProducto, setGenerandoCampanaProducto] = useState(false);
+  const [resultadoCampanaProducto, setResultadoCampanaProducto] = useState<CampanaProductoResultado | null>(null);
+  const [copiadoProductoId, setCopiadoProductoId] = useState<number | null>(null);
+
   const cargarInteligencia = () => {
     apiClient.get<InteligenciaCRM>("/api/v1/crm/inteligencia").then((res) => setInteligencia(res.data)).catch(() => setInteligencia(null));
   };
@@ -156,8 +284,54 @@ export default function ModuloCRM() {
   useEffect(() => {
     apiClient.get<Cliente[]>("/api/v1/clientes").then((res) => setClientes(res.data)).catch(() => setClientes([]));
     apiClient.get<LogBot[]>("/api/v1/crm/postventa-logs").then((res) => setLogsGenerales(res.data)).catch(() => setLogsGenerales([]));
+    apiClient.get<ProductoLite[]>("/api/v1/productos").then((res) => setProductosDisponibles(res.data)).catch(() => setProductosDisponibles([]));
     cargarInteligencia();
   }, []);
+
+  function agregarOfertaProducto() {
+    if (!productoSel || !ofertaTexto.trim()) {
+      setMsg({ tipo: "error", texto: "Selecciona un producto y describe la oferta." });
+      return;
+    }
+    if (ofertasProducto.some((o) => o.producto_id === productoSel)) {
+      setMsg({ tipo: "error", texto: "Ese producto ya está en la campaña." });
+      return;
+    }
+    const producto = productosDisponibles.find((p) => p.id === productoSel);
+    if (!producto) return;
+    setOfertasProducto((prev) => [...prev, { producto_id: producto.id, producto_nombre: producto.nombre, oferta: ofertaTexto.trim() }]);
+    setProductoSel("");
+    setOfertaTexto("");
+    setMsg(null);
+  }
+
+  function quitarOfertaProducto(producto_id: number) {
+    setOfertasProducto((prev) => prev.filter((o) => o.producto_id !== producto_id));
+  }
+
+  async function lanzarCampanaProducto() {
+    if (ofertasProducto.length === 0) return;
+    setGenerandoCampanaProducto(true);
+    setResultadoCampanaProducto(null);
+    try {
+      const { data } = await apiClient.post<CampanaProductoResultado>("/api/v1/agentes/alo/campana-producto", {
+        productos: ofertasProducto.map((o) => ({ producto_id: o.producto_id, oferta: o.oferta })),
+        limite: 20,
+      });
+      setResultadoCampanaProducto(data);
+    } catch {
+      setMsg({ tipo: "error", texto: "ALO no pudo generar la campaña por producto en este momento." });
+    } finally {
+      setGenerandoCampanaProducto(false);
+    }
+  }
+
+  function copiarMensajeProducto(item: CandidatoProducto) {
+    navigator.clipboard.writeText(item.mensaje).then(() => {
+      setCopiadoProductoId(item.cliente_id);
+      setTimeout(() => setCopiadoProductoId(null), 2000);
+    });
+  }
 
   const segmentoPorCliente = useMemo(() => {
     const mapa = new Map<number, SegmentoCliente>();
@@ -414,25 +588,120 @@ export default function ModuloCRM() {
                           <div key={m.cliente_id} className="bg-white rounded-2xl border border-violet-100 p-3.5 space-y-2">
                             <p className="text-xs font-bold text-slate-800">{m.nombre}</p>
                             <p className="text-xs text-slate-600 whitespace-pre-wrap">{m.mensaje}</p>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => copiarMensajeCampana(m)}
-                                className="text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-full transition-all"
-                              >
-                                {copiadoCampanaId === m.cliente_id ? "✓ Copiado" : "📋 Copiar"}
-                              </button>
-                              {m.telefono && (
-                                <a
-                                  href={`https://wa.me/${m.telefono.replace(/\D/g, "")}?text=${encodeURIComponent(m.mensaje)}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-full transition-all"
-                                >
-                                  💬 Enviar por WhatsApp
-                                </a>
-                              )}
+                            <BotonesOmnicanal
+                              telefono={m.telefono}
+                              instagram={m.instagram}
+                              mensaje={m.mensaje}
+                              copiado={copiadoCampanaId === m.cliente_id}
+                              onCopiar={() => copiarMensajeCampana(m)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+
+              {/* CAMPAÑA POR PRODUCTO/OFERTA (ej. exceso de stock) */}
+              <section className="bg-white rounded-3xl border border-slate-100/80 shadow-sm p-6 space-y-4">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">🏷️ Campaña por Producto/Oferta</h3>
+                  <p className="text-xs text-slate-400">
+                    Ofrece uno o varios productos (ej. exceso de stock) a quienes más probablemente les interese: clientes que
+                    ya lo compraron antes, o que en sus visitas reportaron buen inventario sin quejas en ese rubro. Si un
+                    cliente califica para varios productos, ALO combina todo en un solo mensaje para no saturarlo.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-[2fr_2fr_auto] gap-2">
+                  <select
+                    className={inputCls}
+                    value={productoSel}
+                    onChange={(e) => setProductoSel(e.target.value ? Number(e.target.value) : "")}
+                    title="Producto a ofertar"
+                    aria-label="Producto a ofertar"
+                  >
+                    <option value="">Selecciona un producto...</option>
+                    {productosDisponibles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.nombre} {p.linea ? `(${p.linea})` : ""}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    className={inputCls}
+                    value={ofertaTexto}
+                    onChange={(e) => setOfertaTexto(e.target.value)}
+                    placeholder="Ej: 20% de descuento por exceso de stock"
+                  />
+                  <button
+                    type="button"
+                    onClick={agregarOfertaProducto}
+                    className="bg-slate-900 hover:bg-slate-700 text-white rounded-xl px-4 text-xs font-bold transition-all whitespace-nowrap"
+                  >
+                    + Agregar
+                  </button>
+                </div>
+
+                {ofertasProducto.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {ofertasProducto.map((o) => (
+                      <span key={o.producto_id} className="flex items-center gap-2 bg-amber-50 border border-amber-100 text-amber-800 text-xs font-bold pl-3 pr-2 py-1.5 rounded-full">
+                        {o.producto_nombre}: {o.oferta}
+                        <button
+                          type="button"
+                          onClick={() => quitarOfertaProducto(o.producto_id)}
+                          title="Quitar de la campaña"
+                          aria-label={`Quitar ${o.producto_nombre} de la campaña`}
+                          className="text-amber-500 hover:text-amber-900"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  disabled={ofertasProducto.length === 0 || generandoCampanaProducto}
+                  onClick={lanzarCampanaProducto}
+                  className="text-xs font-bold px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white transition-all disabled:opacity-50"
+                >
+                  {generandoCampanaProducto ? "ALO está buscando clientes y redactando..." : "🚀 Lanzar Campaña por Producto"}
+                </button>
+
+                {resultadoCampanaProducto && (
+                  <div className="rounded-2xl border border-amber-100 bg-amber-50/40 p-4 space-y-2.5 animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-bold text-amber-800">
+                        🎯 {resultadoCampanaProducto.total_candidatos} cliente(s) potencial(es) encontrado(s)
+                        {resultadoCampanaProducto.fuente === "ia" ? " · mensajes generados por IA" : " · plantilla (configura ANTHROPIC_API_KEY para personalización por IA)"}
+                      </p>
+                      <button type="button" onClick={() => setResultadoCampanaProducto(null)} className="text-xs text-slate-400 hover:text-slate-600 font-semibold">✕ Cerrar</button>
+                    </div>
+                    {resultadoCampanaProducto.generados.length === 0 ? (
+                      <p className="text-xs text-slate-400">No se encontraron clientes potenciales para estos productos.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-80 overflow-y-auto">
+                        {resultadoCampanaProducto.generados.map((m) => (
+                          <div key={m.cliente_id} className="bg-white rounded-2xl border border-amber-100 p-3.5 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-bold text-slate-800">{m.nombre}</p>
+                              <div className="flex gap-1">
+                                {m.compro_antes && <span className="text-[9px] font-bold bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-full">🛒 Compró antes</span>}
+                                {m.sin_quejas_rubro && <span className="text-[9px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full">⭐ Sin quejas en el rubro</span>}
+                              </div>
                             </div>
+                            <p className="text-[10px] text-slate-400">Productos ofertados: {m.productos_ofertados.join(", ")}</p>
+                            <p className="text-xs text-slate-600 whitespace-pre-wrap">{m.mensaje}</p>
+                            <BotonesOmnicanal
+                              telefono={m.telefono}
+                              instagram={m.instagram}
+                              mensaje={m.mensaje}
+                              copiado={copiadoProductoId === m.cliente_id}
+                              onCopiar={() => copiarMensajeProducto(m)}
+                            />
                           </div>
                         ))}
                       </div>
@@ -710,7 +979,7 @@ export default function ModuloCRM() {
               </button>
               {aloModal.telefono && (
                 <a
-                  href={`https://wa.me/${aloModal.telefono.replace(/\D/g, "")}?text=${encodeURIComponent(aloModal.mensaje)}`}
+                  href={construirEnlaceWhatsApp(aloModal.telefono, aloModal.mensaje)}
                   target="_blank"
                   rel="noreferrer"
                   className="flex-1 text-center bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl py-2.5 text-sm font-bold transition-all"

@@ -5,6 +5,22 @@ import ModalSolicitudDesposte from "./ModalSolicitudDesposte";
 import { normalizeDept } from "../lib/departamentos";
 import TicketTermico, { TICKET_CONFIG_DEFAULT, type TicketConfigVM, type TicketDatosVM } from "./TicketTermico";
 import TicketArqueoCaja, { type TurnoCajaVM } from "./TicketArqueoCaja";
+import { leerClaimsToken } from "../lib/auth";
+
+// Roles operativos de Caja, explícitos para la capa de seguridad de precios.
+// Mapean a los roles reales del backend: cajero -> CAJERO, admin -> GERENTE, propietario -> PROPIETARIO.
+export type RolSupervisor = "CAJERO" | "GERENTE" | "PROPIETARIO";
+
+const MAPA_ROL_BACKEND: Record<string, RolSupervisor> = {
+  cajero: "CAJERO",
+  admin: "GERENTE",
+  propietario: "PROPIETARIO",
+};
+
+function mapearRolSupervisor(rolBackend: string | null): RolSupervisor | null {
+  if (!rolBackend) return null;
+  return MAPA_ROL_BACKEND[rolBackend] ?? null;
+}
 
 interface ClienteLite {
   id: number;
@@ -26,6 +42,7 @@ interface ItemCarrito {
   id: string;
   nombre: string;
   precio: number;
+  precioOriginal: number;
   cantidad: number;
   unidad: "u" | "kg";
 }
@@ -229,6 +246,19 @@ export default function ModuloCaja() {
   const [cerrandoTurno, setCerrandoTurno] = useState(false);
   const [errorArqueo, setErrorArqueo] = useState("");
   const [ticketArqueoImprimir, setTicketArqueoImprimir] = useState<TurnoCajaVM | null>(null);
+  const [passwordApertura, setPasswordApertura] = useState("");
+
+  // --- Seguridad por roles: identidad de la sesión y autorización de precios ---
+  const [claimsSesion] = useState(() => leerClaimsToken());
+  const rolSupervisor = mapearRolSupervisor(claimsSesion.rol);
+
+  const [itemAutorizando, setItemAutorizando] = useState<string | null>(null);
+  const [emailSupervisor, setEmailSupervisor] = useState("");
+  const [passwordSupervisor, setPasswordSupervisor] = useState("");
+  const [autorizandoSupervisor, setAutorizandoSupervisor] = useState(false);
+  const [errorAutorizacion, setErrorAutorizacion] = useState("");
+  const [tokenAutorizacionPrecio, setTokenAutorizacionPrecio] = useState<string | null>(null);
+  const [itemsPrecioDesbloqueado, setItemsPrecioDesbloqueado] = useState<Set<string>>(new Set());
 
   // --- Tickets en espera (carritos suspendidos, persistidos en localStorage) ---
   const [ticketsSuspendidos, setTicketsSuspendidos] = useState<TicketSuspendido[]>(() => {
@@ -348,6 +378,10 @@ export default function ModuloCaja() {
   // Registra el fondo de caja inicial y abre el turno; bloquea el teclado del POS hasta entonces
   async function abrirTurno() {
     setErrorApertura("");
+    if (!passwordApertura.trim()) {
+      setErrorApertura("Ingresa tu contraseña para confirmar tu identidad y abrir el turno.");
+      return;
+    }
     const usd = Number(fondoInicialUsd) || 0;
     const ves = Number(fondoInicialVes) || 0;
     setAbriendoTurno(true);
@@ -355,14 +389,45 @@ export default function ModuloCaja() {
       const { data } = await apiClient.post<TurnoCajaVM>("/api/v1/caja/abrir-turno", {
         monto_inicial_usd: usd,
         monto_inicial_ves: ves,
+        email: claimsSesion.email,
+        password: passwordApertura,
       });
       setTurnoActivo(data);
       setFondoInicialUsd("");
       setFondoInicialVes("");
+      setPasswordApertura("");
     } catch (err: any) {
       setErrorApertura(err?.response?.data?.detail || "No se pudo abrir el turno de caja.");
     } finally {
       setAbriendoTurno(false);
+    }
+  }
+
+  // Pide el desbloqueo del precio de UN artículo específico: abre el modal de
+  // autorización de gerencia (CAJERO no puede editar el precio sin esto).
+  function solicitarAutorizacionPrecio(itemId: string) {
+    setErrorAutorizacion("");
+    setEmailSupervisor("");
+    setPasswordSupervisor("");
+    setItemAutorizando(itemId);
+  }
+
+  async function confirmarAutorizacionSupervisor() {
+    if (!itemAutorizando) return;
+    setErrorAutorizacion("");
+    setAutorizandoSupervisor(true);
+    try {
+      const { data } = await apiClient.post<{ autorizado: boolean; token: string }>("/api/v1/auth/autorizar-supervisor", {
+        email: emailSupervisor,
+        password: passwordSupervisor,
+      });
+      setTokenAutorizacionPrecio(data.token);
+      setItemsPrecioDesbloqueado((prev) => new Set(prev).add(itemAutorizando));
+      setItemAutorizando(null);
+    } catch (err: any) {
+      setErrorAutorizacion(err?.response?.data?.detail || "No se pudo validar la autorización de gerencia.");
+    } finally {
+      setAutorizandoSupervisor(false);
     }
   }
 
@@ -745,6 +810,8 @@ export default function ModuloCaja() {
     setEncuestasPendientes([]);
     setMostrarResolucionModal(false);
     setResolucionComentario("");
+    setTokenAutorizacionPrecio(null);
+    setItemsPrecioDesbloqueado(new Set());
     cargarColaClientes();
   }
 
@@ -868,12 +935,16 @@ export default function ModuloCaja() {
       if (carrito.length > 0) {
         const items = carrito.map(item => ({
           producto_id: Number(item.id),
-          peso: item.cantidad
+          peso: item.cantidad,
+          // Solo se envía cuando el cajero/gerente modificó el precio en caliente;
+          // si no, el backend usa el precio del catálogo maestro.
+          precio_unitario: item.precio !== item.precioOriginal ? item.precio : undefined,
         }));
         await apiClient.post("/api/v1/tickets", {
           cliente_id: cliente.id,
           items: items,
-          metodo_pago: metodoPago
+          metodo_pago: metodoPago,
+          autorizacion_supervisor: tokenAutorizacionPrecio,
         });
       }
 
@@ -954,6 +1025,7 @@ export default function ModuloCaja() {
           id: String(producto.id),
           nombre: producto.nombre,
           precio: Number(producto.precio_1_detalle),
+          precioOriginal: Number(producto.precio_1_detalle),
           cantidad: 1,
           unidad: producto.linea && ["carniceria", "verduleria", "charcuteria"].includes(normalizeDept(producto.linea)) ? "kg" : "u"
         }
@@ -1013,6 +1085,7 @@ export default function ModuloCaja() {
           id: String(pesoModal.id),
           nombre: pesoModal.nombre,
           precio: Number(pesoModal.precio_1_detalle),
+          precioOriginal: Number(pesoModal.precio_1_detalle),
           cantidad: peso,
           unidad: "kg"
         }
@@ -1110,6 +1183,31 @@ export default function ModuloCaja() {
           {errorApertura && <p className="text-sm font-medium text-red-600 text-center">{errorApertura}</p>}
 
           <label className="flex flex-col">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Cuenta de Usuario</span>
+            <input
+              type="text"
+              value={claimsSesion.email ?? ""}
+              disabled
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2.5 text-sm text-slate-500"
+            />
+            <span className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Rol: {rolSupervisor ?? "Sin acceso"}
+            </span>
+          </label>
+
+          <label className="flex flex-col">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Contraseña Global del Sistema</span>
+            <input
+              type="password"
+              value={passwordApertura}
+              onChange={(e) => setPasswordApertura(e.target.value)}
+              placeholder="••••••••"
+              autoFocus
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+
+          <label className="flex flex-col">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Fondo de Caja Inicial (USD)</span>
             <input
               type="number"
@@ -1118,7 +1216,6 @@ export default function ModuloCaja() {
               value={fondoInicialUsd}
               onChange={(e) => setFondoInicialUsd(e.target.value)}
               placeholder="0.00"
-              autoFocus
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </label>
@@ -1697,20 +1794,37 @@ export default function ModuloCaja() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-600">
-                      <div className="flex items-center gap-1">
-                        <span>$</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={i.precio}
-                          onChange={(e) => actualizarPrecioCarrito(i.id, Number(e.target.value))}
-                          title="Editar precio unitario solo para esta venta"
-                          aria-label={`Precio unitario de ${i.nombre}`}
-                          className="w-20 rounded-lg border border-slate-200 px-1.5 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        {i.unidad === "kg" && <span className="text-[10px] text-slate-400">/Kg</span>}
-                      </div>
+                      {(() => {
+                        const bloqueado = rolSupervisor === "CAJERO" && !itemsPrecioDesbloqueado.has(i.id);
+                        return (
+                          <div className="flex items-center gap-1">
+                            <span>$</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={i.precio}
+                              disabled={bloqueado}
+                              onChange={(e) => actualizarPrecioCarrito(i.id, Number(e.target.value))}
+                              title={bloqueado ? "Precio bloqueado: requiere autorización de Gerencia" : "Editar precio unitario solo para esta venta"}
+                              aria-label={`Precio unitario de ${i.nombre}`}
+                              className="w-20 rounded-lg border border-slate-200 px-1.5 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
+                            />
+                            {i.unidad === "kg" && <span className="text-[10px] text-slate-400">/Kg</span>}
+                            {bloqueado && (
+                              <button
+                                type="button"
+                                onClick={() => solicitarAutorizacionPrecio(i.id)}
+                                title="Modificar Precio (requiere autorización de Gerencia)"
+                                aria-label="Modificar Precio"
+                                className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors"
+                              >
+                                🔒
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">${fmt(i.precio * i.cantidad)}</td>
                     <td className="px-4 py-3 text-right">
@@ -2350,6 +2464,63 @@ export default function ModuloCaja() {
       {ticketReimprimirDatos && (
         <div className="ticket-imprimible ticket-oculto-pantalla">
           <TicketTermico config={ticketConfig} datos={ticketReimprimirDatos} />
+        </div>
+      )}
+
+      {/* --- Modal: Autorización de Gerencia para modificar precio --- */}
+      {itemAutorizando && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setItemAutorizando(null)}>
+          <div className="w-full max-w-sm bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center space-y-1">
+              <span className="text-3xl">🔐</span>
+              <h3 className="text-lg font-black tracking-tight text-rose-700 uppercase">Autorización de Gerencia Requerida</h3>
+              <p className="text-xs text-slate-500">Un usuario con rol Gerente o Propietario debe validar sus credenciales para desbloquear este precio.</p>
+            </div>
+
+            {errorAutorizacion && <p className="text-sm font-medium text-red-600 text-center">{errorAutorizacion}</p>}
+
+            <label className="flex flex-col">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Usuario Gerente/Propietario</span>
+              <input
+                type="email"
+                value={emailSupervisor}
+                onChange={(e) => setEmailSupervisor(e.target.value)}
+                placeholder="gerente@empresa.com"
+                autoFocus
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
+              />
+            </label>
+
+            <label className="flex flex-col">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Contraseña</span>
+              <input
+                type="password"
+                value={passwordSupervisor}
+                onChange={(e) => setPasswordSupervisor(e.target.value)}
+                placeholder="••••••••"
+                onKeyDown={(e) => { if (e.key === "Enter") confirmarAutorizacionSupervisor(); }}
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
+              />
+            </label>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setItemAutorizando(null)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-2.5 text-sm font-bold transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarAutorizacionSupervisor}
+                disabled={autorizandoSupervisor || !emailSupervisor.trim() || !passwordSupervisor.trim()}
+                className="flex-1 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl py-2.5 text-sm font-bold transition-all"
+              >
+                {autorizandoSupervisor ? "Validando..." : "Autorizar"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

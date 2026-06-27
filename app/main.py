@@ -2,7 +2,10 @@ import calendar
 import datetime
 import os
 from decimal import Decimal
-from app.core.security import generar_hash_password, verificar_password, crear_access_token, get_current_user, verificar_rol
+from app.core.security import (
+    generar_hash_password, verificar_password, crear_access_token, get_current_user, verificar_rol,
+    crear_token_autorizacion_precio, verificar_token_autorizacion_precio,
+)
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -48,6 +51,7 @@ from app.schemas import (
     RegistroEmpresaAdmin, LoginRequest, Token, TokenData,
     EmpresaConfigResponse, NomenclaturaNegocioResponse, TicketConfigResponse, TicketConfigUpdate,
     AbrirTurnoRequest, CerrarTurnoRequest, TurnoCajaResponse, EstadoTurnoResponse, DesgloseMetodoPagoItem,
+    AutorizarSupervisorRequest, AutorizarSupervisorResponse,
     ClienteCreate, ClienteUpdate, ClienteResponse,
     ProductoCreate, ProductoUpdate, ProductoResponse, LoteCreate, LoteResponse,
     MermaCreate, MermaResponse, TicketCreate, TicketResponse, VentaResponse,
@@ -81,7 +85,8 @@ from app.schemas import (
     RutaVendedorCreate, RutaVendedorResponse, RutaEstadoUpdate, ActividadAvanceUpdate, RutaActividadResponse,
     ActividadRtcItem,
     RenglonGastoCreate, RenglonGastoUpdate, RenglonGastoResponse, PagoRenglonCreate, PagoRenglonResponse,
-    SegmentoClienteItem, InteligenciaCRMResponse, CampanaAloRequest, CampanaAloItem, CampanaAloResponse
+    SegmentoClienteItem, InteligenciaCRMResponse, CampanaAloRequest, CampanaAloItem, CampanaAloResponse,
+    OfertaProductoItem, CampanaProductoRequest, CandidatoProductoItem, CampanaProductoResponse
 )
 
 # Grupos de roles para el control de accesos (RBAC)
@@ -96,6 +101,10 @@ ROLES_DESPOSTE = ["admin", "propietario", "carnicero", "verdulero", "charcutero"
 ROLES_LECTURA_CARTERA = ROLES_GESTION + ["vendedor"]
 # Quien puede solicitar y verificar un desposte desde Caja (no ejecutarlo: eso es ROLES_DESPOSTE)
 ROLES_SOLICITUD_DESPOSTE = ["admin", "propietario", "cajero"]
+# Quien puede abrir/operar un turno de Caja (Cajero o Gerencia)
+ROLES_TURNO_CAJA = ["cajero", "admin", "propietario"]
+# Quien puede autorizar una modificación de precio en Caja (solo Gerencia/Propietario, nunca Cajero)
+ROLES_AUTORIZA_PRECIO = ["admin", "propietario"]
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -1440,6 +1449,22 @@ def crear_ticket(
                     detail=f"El producto {item.producto_id} no existe o no pertenece a su empresa."
                 )
 
+            # Seguridad de precios: si el precio enviado difiere del catálogo maestro,
+            # un CAJERO necesita un token de autorización de Gerencia válido (firmado
+            # por el backend en /api/v1/auth/autorizar-supervisor). Nunca se confía en
+            # un flag del frontend para permitir la alteración.
+            precio_efectivo = producto.precio_1_detalle
+            if item.precio_unitario is not None and item.precio_unitario != producto.precio_1_detalle:
+                if usuario_actual.rol == "cajero":
+                    if not datos.autorizacion_supervisor or not verificar_token_autorizacion_precio(
+                        datos.autorizacion_supervisor, usuario_actual.eid
+                    ):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"El precio de '{producto.nombre}' difiere del catálogo y requiere autorización de Gerencia.",
+                        )
+                precio_efectivo = item.precio_unitario
+
             # Lotes activos con stock, ordenados FEFO (vencen primero) y FIFO (ingresaron primero)
             lotes = db.query(Lote).filter(
                 Lote.empresa_id == usuario_actual.eid,
@@ -1466,7 +1491,7 @@ def crear_ticket(
                 if lote.cantidad_actual == 0:
                     lote.status = "agotado"
 
-            monto_usd = (item.peso * producto.precio_1_detalle).quantize(Decimal("0.01"))
+            monto_usd = (item.peso * precio_efectivo).quantize(Decimal("0.01"))
             monto_ves = (monto_usd * tasa_bcv).quantize(Decimal("0.01"))
 
             nuevo_ticket = Ticket(
@@ -3293,6 +3318,17 @@ def abrir_turno_caja(
     db: Session = Depends(get_db),
     usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION)),
 ):
+    # Reautenticación: el cajero debe confirmar su propia identidad con email+clave
+    # antes de abrir el cajón de dinero, y su rol debe ser Cajero o Gerencia.
+    usuario = db.query(Usuario).filter(
+        Usuario.id == usuario_actual.usuario_id,
+        Usuario.empresa_id == usuario_actual.eid,
+    ).first()
+    if not usuario or usuario.email != datos.email or not verificar_password(datos.password, usuario.password_hash):
+        raise HTTPException(status_code=401, detail="Email o contraseña incorrectos.")
+    if usuario.rol not in ROLES_TURNO_CAJA:
+        raise HTTPException(status_code=403, detail="Tu rol no está autorizado para abrir un turno de caja.")
+
     existente = db.query(TurnoCaja).filter(
         TurnoCaja.empresa_id == usuario_actual.eid,
         TurnoCaja.usuario_id == usuario_actual.usuario_id,
@@ -3317,6 +3353,29 @@ def abrir_turno_caja(
         raise HTTPException(status_code=400, detail="No se pudo abrir el turno de caja.")
 
     return _construir_turno_response(db, nuevo_turno)
+
+
+# Autoriza, con credenciales reales de un GERENTE o PROPIETARIO, que un CAJERO pueda
+# modificar el precio de un artículo en la venta en curso. Devuelve un token firmado
+# y de corta duración (10 min) que el frontend adjunta al POST /api/v1/tickets;
+# el backend lo vuelve a verificar ahí, así el frontend no puede forjar la autorización.
+@app.post("/api/v1/auth/autorizar-supervisor", tags=["Caja - Turnos"], response_model=AutorizarSupervisorResponse)
+def autorizar_supervisor(
+    datos: AutorizarSupervisorRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_OPERACION)),
+):
+    supervisor = db.query(Usuario).filter(
+        Usuario.email == datos.email,
+        Usuario.empresa_id == usuario_actual.eid,
+    ).first()
+    if not supervisor or not verificar_password(datos.password, supervisor.password_hash):
+        raise HTTPException(status_code=401, detail="Email o contraseña incorrectos.")
+    if supervisor.rol not in ROLES_AUTORIZA_PRECIO:
+        raise HTTPException(status_code=403, detail="Se requiere un usuario con rol Gerente o Propietario.")
+
+    token = crear_token_autorizacion_precio(empresa_id=usuario_actual.eid, supervisor_id=supervisor.id)
+    return AutorizarSupervisorResponse(autorizado=True, token=token, supervisor_nombre=supervisor.nombre, rol=supervisor.rol)
 
 
 @app.post("/api/v1/caja/cerrar-turno", tags=["Caja - Turnos"], response_model=TurnoCajaResponse)
@@ -4735,11 +4794,120 @@ def campana_alo(
             hubo_ia = True
         else:
             mensaje = _fallback_alo_campana(cliente.nombre, item.segmento, float(item.saldo_cxc))
-        generados.append(CampanaAloItem(cliente_id=cliente.id, nombre=cliente.nombre, telefono=cliente.telefono, mensaje=mensaje))
+        generados.append(CampanaAloItem(cliente_id=cliente.id, nombre=cliente.nombre, telefono=cliente.telefono, instagram=cliente.instagram, mensaje=mensaje))
 
     return CampanaAloResponse(
         segmento=datos.segmento, fuente="ia" if hubo_ia else "reglas",
         total_segmento=len(objetivo), generados=generados,
+    )
+
+
+def _buscar_candidatos_producto(db: Session, empresa_id: int, producto_id: int) -> dict[int, dict]:
+    """Encuentra clientes potenciales para ofertar un producto, según 2 señales:
+    1) compro_antes: ya compró ese producto exacto.
+    2) sin_quejas_rubro: una visita de campo reportó productos de la MISMA línea
+       (ej. Carnicería) en su inventario y nunca marcó queja en ninguno de ellos.
+    Es una UNIÓN: basta con cumplir cualquiera de las dos para calificar."""
+    producto = db.query(Producto).filter(Producto.id == producto_id, Producto.empresa_id == empresa_id).first()
+    if not producto:
+        return {}
+
+    candidatos: dict[int, dict] = {}
+
+    compradores = db.query(Ticket.cliente_id).filter(
+        Ticket.empresa_id == empresa_id,
+        Ticket.producto_id == producto_id,
+        Ticket.status == "procesado",
+    ).distinct().all()
+    for (cliente_id,) in compradores:
+        candidatos.setdefault(cliente_id, {"compro_antes": False, "sin_quejas_rubro": False})
+        candidatos[cliente_id]["compro_antes"] = True
+
+    if producto.linea:
+        filas = (
+            db.query(EncuestaInventarioItem.cliente_id, EncuestaInventarioItem.tiene_queja)
+            .join(Producto, Producto.id == EncuestaInventarioItem.producto_id)
+            .filter(Producto.empresa_id == empresa_id, Producto.linea == producto.linea)
+            .all()
+        )
+        tuvo_queja_por_cliente: dict[int, bool] = {}
+        for cliente_id, tiene_queja in filas:
+            tuvo_queja_por_cliente[cliente_id] = tuvo_queja_por_cliente.get(cliente_id, False) or bool(tiene_queja)
+        for cliente_id, tuvo_queja in tuvo_queja_por_cliente.items():
+            if not tuvo_queja:
+                candidatos.setdefault(cliente_id, {"compro_antes": False, "sin_quejas_rubro": False})
+                candidatos[cliente_id]["sin_quejas_rubro"] = True
+
+    return candidatos
+
+
+@app.post("/api/v1/agentes/alo/campana-producto", tags=["Agentes IA"], response_model=CampanaProductoResponse)
+def campana_alo_producto(
+    datos: CampanaProductoRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(requiere_guia_ia("alo", ROLES_OPERACION))
+):
+    empresa_id = usuario_actual.eid
+    if not datos.productos:
+        raise HTTPException(status_code=400, detail="Debes indicar al menos un producto con su oferta.")
+
+    # cliente_id -> lista de ofertas que le aplican (puede ser de varios productos a la vez)
+    ofertas_por_cliente: dict[int, list[dict]] = {}
+    for item in datos.productos:
+        producto = db.query(Producto).filter(Producto.id == item.producto_id, Producto.empresa_id == empresa_id).first()
+        if not producto:
+            continue
+        candidatos = _buscar_candidatos_producto(db, empresa_id, item.producto_id)
+        for cliente_id, senales in candidatos.items():
+            ofertas_por_cliente.setdefault(cliente_id, []).append({
+                "producto_nombre": producto.nombre,
+                "oferta": item.oferta,
+                "compro_antes": senales["compro_antes"],
+                "sin_quejas_rubro": senales["sin_quejas_rubro"],
+            })
+
+    limite = max(1, min(datos.limite, 50))
+    cliente_ids = list(ofertas_por_cliente.keys())[:limite]
+
+    generados: List[CandidatoProductoItem] = []
+    hubo_ia = False
+    for cliente_id in cliente_ids:
+        cliente = db.query(Cliente).filter(Cliente.id == cliente_id, Cliente.empresa_id == empresa_id).first()
+        if not cliente:
+            continue
+
+        ofertas_cliente = ofertas_por_cliente[cliente_id]
+        lista_ofertas_texto = "; ".join(f"{o['producto_nombre']}: {o['oferta']}" for o in ofertas_cliente)
+        pregunta = (
+            "Redacta UN solo mensaje corto de WhatsApp que combine estas ofertas en un único párrafo "
+            f"(no las separes en mensajes distintos, no satures al cliente con varios textos): {lista_ofertas_texto}."
+        )
+        contexto = _construir_contexto_alo(db, empresa_id, cliente, pregunta=pregunta)
+        contexto["ofertas_producto"] = ofertas_cliente
+
+        resultado = consultar_agente(ALO_SYSTEM_PROMPT, contexto, pregunta)
+        if resultado["fuente"] == "ia" and resultado["respuesta"]:
+            mensaje = resultado["respuesta"]
+            hubo_ia = True
+        else:
+            nombres = ", ".join(o["producto_nombre"] for o in ofertas_cliente)
+            mensaje = f"Hola {cliente.nombre} 👋 tenemos una oferta especial para ti en {nombres}. ¡Aprovecha antes de que se agote!"
+
+        generados.append(CandidatoProductoItem(
+            cliente_id=cliente.id,
+            nombre=cliente.nombre,
+            telefono=cliente.telefono,
+            instagram=cliente.instagram,
+            productos_ofertados=[o["producto_nombre"] for o in ofertas_cliente],
+            compro_antes=any(o["compro_antes"] for o in ofertas_cliente),
+            sin_quejas_rubro=any(o["sin_quejas_rubro"] for o in ofertas_cliente),
+            mensaje=mensaje,
+        ))
+
+    return CampanaProductoResponse(
+        fuente="ia" if hubo_ia else "reglas",
+        total_candidatos=len(ofertas_por_cliente),
+        generados=generados,
     )
 
 

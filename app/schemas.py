@@ -253,12 +253,19 @@ class MermaResponse(BaseModel):
 class TicketItemCreate(BaseModel):
     producto_id: int
     peso: Decimal
+    # Precio unitario "en caliente" editado por el cajero para esta venta puntual.
+    # Si es None, o coincide con el precio del catálogo, no requiere autorización.
+    precio_unitario: Optional[Decimal] = None
 
 # Molde de entrada para registrar una venta (sin empresa_id ni usuario_id, inyectados por el backend)
 class TicketCreate(BaseModel):
     cliente_id: int
     items: List[TicketItemCreate]
     metodo_pago: str = "Efectivo $"
+    # Token firmado por el backend (POST /api/v1/auth/autorizar-supervisor) que prueba
+    # que un GERENTE/PROPIETARIO autorizó los precios modificados en este ticket.
+    # Obligatorio solo si el usuario del turno es CAJERO y algún precio difiere del catálogo.
+    autorizacion_supervisor: Optional[str] = None
 
 # Molde de salida con los datos completos de un Ticket (una línea de la venta)
 # monto_ves se calcula dinámicamente (no se almacena) a partir de la tasa BCV vigente
@@ -806,6 +813,7 @@ class CampanaAloItem(BaseModel):
     cliente_id: int
     nombre: str
     telefono: Optional[str] = None
+    instagram: Optional[str] = None
     mensaje: str
 
 class CampanaAloResponse(BaseModel):
@@ -813,6 +821,33 @@ class CampanaAloResponse(BaseModel):
     fuente: str  # "ia" si al menos un mensaje vino de IA, "reglas" si todos cayeron al fallback
     total_segmento: int
     generados: List[CampanaAloItem]
+
+# --- Campaña por Producto/Oferta: ofertar uno o varios productos (ej. exceso de stock)
+# a los clientes con más probabilidad de interés, combinando todas las ofertas que le
+# aplican a un mismo cliente en UN solo mensaje para no saturarlo. ---
+
+class OfertaProductoItem(BaseModel):
+    producto_id: int
+    oferta: str
+
+class CampanaProductoRequest(BaseModel):
+    productos: List[OfertaProductoItem]
+    limite: int = 20
+
+class CandidatoProductoItem(BaseModel):
+    cliente_id: int
+    nombre: str
+    telefono: Optional[str] = None
+    instagram: Optional[str] = None
+    productos_ofertados: List[str]
+    compro_antes: bool
+    sin_quejas_rubro: bool
+    mensaje: str
+
+class CampanaProductoResponse(BaseModel):
+    fuente: str  # "ia" si al menos un mensaje vino de IA, "reglas" si todos cayeron al fallback
+    total_candidatos: int
+    generados: List[CandidatoProductoItem]
 
 # --- Esquemas para Desposte (descomposición de un producto entero en sus cortes) ---
 
@@ -1217,6 +1252,24 @@ class ActividadRtcItem(BaseModel):
 class AbrirTurnoRequest(BaseModel):
     monto_inicial_usd: Decimal = Decimal("0.00")
     monto_inicial_ves: Decimal = Decimal("0.00")
+    # Reautenticación del cajero (debe ser el mismo usuario de la sesión) antes de
+    # abrir el turno: confirma identidad y exige rol Cajero/Gerente/Propietario.
+    email: str
+    password: str
+
+# Molde de entrada para que un GERENTE o PROPIETARIO autorice una modificación de
+# precio que intenta hacer un CAJERO en Caja/POS
+class AutorizarSupervisorRequest(BaseModel):
+    email: str
+    password: str
+
+# Molde de salida: el token firmado que el frontend adjunta al ticket para probar
+# la autorización ante el backend (ver TicketCreate.autorizacion_supervisor)
+class AutorizarSupervisorResponse(BaseModel):
+    autorizado: bool
+    token: str
+    supervisor_nombre: str
+    rol: str
 
 # Molde de entrada para cerrar un turno: el conteo físico real que reporta el cajero
 class CerrarTurnoRequest(BaseModel):
