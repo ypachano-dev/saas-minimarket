@@ -217,6 +217,10 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
       reader.onload = (event) => {
         const img = new Image();
         img.src = event.target?.result as string;
+        // Si el archivo no es una imagen decodificable (corrupto, o el bypass de
+        // "Demos Rápidas" que simula un File con bytes de relleno), onload nunca
+        // dispara — sin este handler la Promise se queda colgada para siempre.
+        img.onerror = () => resolve(file);
         img.onload = () => {
           const canvas = document.createElement("canvas");
           const MAX_WIDTH = 1000;

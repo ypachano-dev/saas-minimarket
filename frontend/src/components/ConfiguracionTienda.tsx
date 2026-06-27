@@ -34,9 +34,27 @@ interface EmpresaConfigLite {
 export default function ConfiguracionTienda() {
   const [empresa, setEmpresa] = useState<EmpresaConfigLite | null>(null);
   const [config, setConfig] = useState<TicketConfigVM>(TICKET_CONFIG_DEFAULT);
+  const [agentes, setAgentes] = useState({
+    agente_vale_activo: true,
+    agente_vale_prompt: "",
+    agente_vale_modelo: "claude-3-5-haiku-20241022",
+    agente_vale_temperatura: 0.0,
+
+    agente_yhorge_activo: true,
+    agente_yhorge_prompt: "",
+    agente_yhorge_modelo: "claude-3-5-haiku-20241022",
+    agente_yhorge_temperatura: 0.0,
+
+    agente_alo_activo: true,
+    agente_alo_prompt: "",
+    agente_alo_modelo: "claude-3-5-haiku-20241022",
+    agente_alo_temperatura: 0.2,
+  });
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
+  const [guardandoAgentes, setGuardandoAgentes] = useState(false);
   const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+  const [mensajeAgentes, setMensajeAgentes] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
 
   useEffect(() => {
     let activo = true;
@@ -54,6 +72,22 @@ export default function ConfiguracionTienda() {
           desglosar_impuestos: data.ticket_config.desglosar_impuestos,
         });
       }
+      setAgentes({
+        agente_vale_activo: data.agente_vale_activo,
+        agente_vale_prompt: data.agente_vale_prompt ?? "",
+        agente_vale_modelo: data.agente_vale_modelo ?? "claude-3-5-haiku-20241022",
+        agente_vale_temperatura: data.agente_vale_temperatura ?? 0.0,
+
+        agente_yhorge_activo: data.agente_yhorge_activo,
+        agente_yhorge_prompt: data.agente_yhorge_prompt ?? "",
+        agente_yhorge_modelo: data.agente_yhorge_modelo ?? "claude-3-5-haiku-20241022",
+        agente_yhorge_temperatura: data.agente_yhorge_temperatura ?? 0.0,
+
+        agente_alo_activo: data.agente_alo_activo,
+        agente_alo_prompt: data.agente_alo_prompt ?? "",
+        agente_alo_modelo: data.agente_alo_modelo ?? "claude-3-5-haiku-20241022",
+        agente_alo_temperatura: data.agente_alo_temperatura ?? 0.2,
+      });
       setCargando(false);
     }).catch(() => setCargando(false));
     return () => { activo = false; };
@@ -61,6 +95,10 @@ export default function ConfiguracionTienda() {
 
   function set<K extends keyof TicketConfigVM>(key: K, value: TicketConfigVM[K]) {
     setConfig((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function updateAgente<K extends keyof typeof agentes>(key: K, value: typeof agentes[K]) {
+    setAgentes((prev) => ({ ...prev, [key]: value }));
   }
 
   async function guardar() {
@@ -80,6 +118,19 @@ export default function ConfiguracionTienda() {
       setMensaje({ tipo: "error", texto: err?.response?.data?.detail || "No se pudo guardar la configuración." });
     } finally {
       setGuardando(false);
+    }
+  }
+
+  async function guardarAgentes() {
+    setGuardandoAgentes(true);
+    setMensajeAgentes(null);
+    try {
+      await apiClient.put("/api/v1/empresa/config-agentes", agentes);
+      setMensajeAgentes({ tipo: "ok", texto: "Ajustes de IA guardados con éxito." });
+    } catch (err: any) {
+      setMensajeAgentes({ tipo: "error", texto: err?.response?.data?.detail || "No se pudieron guardar los ajustes de las guías de IA." });
+    } finally {
+      setGuardandoAgentes(false);
     }
   }
 
@@ -189,6 +240,250 @@ export default function ConfiguracionTienda() {
           />
         </section>
       </div>
+
+      {/* --- Ajustes Avanzados de Guías de IA --- */}
+      <section className="rounded-3xl border border-slate-100/80 bg-white p-6 shadow-sm space-y-6">
+        <div>
+          <h3 className="text-lg font-black tracking-tight text-slate-900">Ajustes Avanzados de Guías de IA</h3>
+          <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Personaliza las respuestas, rapidez e inteligencia de cada guía</p>
+        </div>
+
+        {mensajeAgentes && (
+          <p className={`text-sm font-medium ${mensajeAgentes.tipo === "ok" ? "text-emerald-600" : "text-red-600"}`}>{mensajeAgentes.texto}</p>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* --- AGENTE VALE --- */}
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">📊</span>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800">VALE</h4>
+                  <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                    Análisis y BI
+                    <span className={`inline-block w-1.5 h-1.5 rounded-full ${agentes.agente_vale_activo ? "bg-emerald-500" : "bg-slate-300"}`} />
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAgente("agente_vale_activo", !agentes.agente_vale_activo)}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${
+                  agentes.agente_vale_activo ? "bg-emerald-500" : "bg-slate-200"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-300 ${
+                    agentes.agente_vale_activo ? "translate-x-5" : ""
+                  }`}
+                />
+              </button>
+            </div>
+
+            {agentes.agente_vale_activo && (
+              <div className="space-y-3 pt-2 border-t border-slate-200/60">
+                <label className="flex flex-col">
+                  <span className={labelCls}>Instrucciones del Sistema (Prompt)</span>
+                  <textarea
+                    className={`${inputCls} resize-none text-xs`}
+                    rows={4}
+                    value={agentes.agente_vale_prompt}
+                    onChange={(e) => updateAgente("agente_vale_prompt", e.target.value)}
+                    placeholder="Escribe instrucciones personalizadas (vacío para usar valor por defecto)..."
+                  />
+                </label>
+
+                <label className="flex flex-col">
+                  <span className={labelCls}>Rapidez / Inteligencia</span>
+                  <select
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    value={agentes.agente_vale_modelo}
+                    onChange={(e) => updateAgente("agente_vale_modelo", e.target.value)}
+                  >
+                    <option value="claude-3-5-haiku-20241022">Rápido (Claude 3.5 Haiku)</option>
+                    <option value="claude-3-5-sonnet-20241022">Inteligente (Claude 3.5 Sonnet)</option>
+                  </select>
+                </label>
+
+                <div className="flex flex-col">
+                  <span className={labelCls}>Creatividad (Temperatura: {agentes.agente_vale_temperatura})</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    className="w-full mt-2 cursor-pointer accent-slate-900"
+                    value={agentes.agente_vale_temperatura}
+                    onChange={(e) => updateAgente("agente_vale_temperatura", parseFloat(e.target.value))}
+                  />
+                  <div className="flex justify-between text-[9px] text-slate-400 mt-1">
+                    <span>Preciso/Lógico</span>
+                    <span>Creativo</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* --- AGENTE YHORGE --- */}
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">🧮</span>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800">YHORGE</h4>
+                  <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                    Cobranza y Finanzas
+                    <span className={`inline-block w-1.5 h-1.5 rounded-full ${agentes.agente_yhorge_activo ? "bg-emerald-500" : "bg-slate-300"}`} />
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAgente("agente_yhorge_activo", !agentes.agente_yhorge_activo)}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${
+                  agentes.agente_yhorge_activo ? "bg-emerald-500" : "bg-slate-200"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-300 ${
+                    agentes.agente_yhorge_activo ? "translate-x-5" : ""
+                  }`}
+                />
+              </button>
+            </div>
+
+            {agentes.agente_yhorge_activo && (
+              <div className="space-y-3 pt-2 border-t border-slate-200/60">
+                <label className="flex flex-col">
+                  <span className={labelCls}>Instrucciones del Sistema (Prompt)</span>
+                  <textarea
+                    className={`${inputCls} resize-none text-xs`}
+                    rows={4}
+                    value={agentes.agente_yhorge_prompt}
+                    onChange={(e) => updateAgente("agente_yhorge_prompt", e.target.value)}
+                    placeholder="Escribe instrucciones personalizadas (vacío para usar valor por defecto)..."
+                  />
+                </label>
+
+                <label className="flex flex-col">
+                  <span className={labelCls}>Rapidez / Inteligencia</span>
+                  <select
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    value={agentes.agente_yhorge_modelo}
+                    onChange={(e) => updateAgente("agente_yhorge_modelo", e.target.value)}
+                  >
+                    <option value="claude-3-5-haiku-20241022">Rápido (Claude 3.5 Haiku)</option>
+                    <option value="claude-3-5-sonnet-20241022">Inteligente (Claude 3.5 Sonnet)</option>
+                  </select>
+                </label>
+
+                <div className="flex flex-col">
+                  <span className={labelCls}>Creatividad (Temperatura: {agentes.agente_yhorge_temperatura})</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    className="w-full mt-2 cursor-pointer accent-slate-900"
+                    value={agentes.agente_yhorge_temperatura}
+                    onChange={(e) => updateAgente("agente_yhorge_temperatura", parseFloat(e.target.value))}
+                  />
+                  <div className="flex justify-between text-[9px] text-slate-400 mt-1">
+                    <span>Preciso/Lógico</span>
+                    <span>Creativo</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* --- AGENTE ALO --- */}
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">✨</span>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800">ALO</h4>
+                  <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                    Ventas y Marketing
+                    <span className={`inline-block w-1.5 h-1.5 rounded-full ${agentes.agente_alo_activo ? "bg-emerald-500" : "bg-slate-300"}`} />
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAgente("agente_alo_activo", !agentes.agente_alo_activo)}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${
+                  agentes.agente_alo_activo ? "bg-emerald-500" : "bg-slate-200"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-300 ${
+                    agentes.agente_alo_activo ? "translate-x-5" : ""
+                  }`}
+                />
+              </button>
+            </div>
+
+            {agentes.agente_alo_activo && (
+              <div className="space-y-3 pt-2 border-t border-slate-200/60">
+                <label className="flex flex-col">
+                  <span className={labelCls}>Instrucciones del Sistema (Prompt)</span>
+                  <textarea
+                    className={`${inputCls} resize-none text-xs`}
+                    rows={4}
+                    value={agentes.agente_alo_prompt}
+                    onChange={(e) => updateAgente("agente_alo_prompt", e.target.value)}
+                    placeholder="Escribe instrucciones personalizadas (vacío para usar valor por defecto)..."
+                  />
+                </label>
+
+                <label className="flex flex-col">
+                  <span className={labelCls}>Rapidez / Inteligencia</span>
+                  <select
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    value={agentes.agente_alo_modelo}
+                    onChange={(e) => updateAgente("agente_alo_modelo", e.target.value)}
+                  >
+                    <option value="claude-3-5-haiku-20241022">Rápido (Claude 3.5 Haiku)</option>
+                    <option value="claude-3-5-sonnet-20241022">Inteligente (Claude 3.5 Sonnet)</option>
+                  </select>
+                </label>
+
+                <div className="flex flex-col">
+                  <span className={labelCls}>Creatividad (Temperatura: {agentes.agente_alo_temperatura})</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    className="w-full mt-2 cursor-pointer accent-slate-900"
+                    value={agentes.agente_alo_temperatura}
+                    onChange={(e) => updateAgente("agente_alo_temperatura", parseFloat(e.target.value))}
+                  />
+                  <div className="flex justify-between text-[9px] text-slate-400 mt-1">
+                    <span>Preciso/Lógico</span>
+                    <span>Creativo</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-2">
+          <button
+            type="button"
+            onClick={guardarAgentes}
+            disabled={guardandoAgentes}
+            className="rounded-2xl bg-slate-900 px-6 py-2.5 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:bg-slate-700 hover:shadow-md disabled:bg-slate-400"
+          >
+            {guardandoAgentes ? "Guardando Ajustes..." : "Guardar Ajustes de IA"}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

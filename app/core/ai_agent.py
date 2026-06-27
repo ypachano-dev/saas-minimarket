@@ -10,7 +10,14 @@ def tiene_agente_ia() -> bool:
     return bool(settings.ANTHROPIC_API_KEY.strip())
 
 
-def consultar_agente(system_prompt: str, contexto: dict, pregunta_usuario: Optional[str] = None, max_tokens: int = 1024) -> dict:
+def consultar_agente(
+    system_prompt: str,
+    contexto: dict,
+    pregunta_usuario: Optional[str] = None,
+    max_tokens: int = 1024,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+) -> dict:
     """Llama a la IA de Anthropic con el contexto de datos reales del negocio.
 
     Si no hay ANTHROPIC_API_KEY configurada, o la llamada falla por cualquier motivo
@@ -25,7 +32,7 @@ def consultar_agente(system_prompt: str, contexto: dict, pregunta_usuario: Optio
     mensaje_usuario = (pregunta_usuario or "").strip() or "Genera tu análisis y recomendaciones a partir del contexto de datos."
 
     body = {
-        "model": settings.ANTHROPIC_MODEL,
+        "model": model or settings.ANTHROPIC_MODEL,
         "max_tokens": max_tokens,
         "system": system_prompt,
         "messages": [
@@ -38,6 +45,8 @@ def consultar_agente(system_prompt: str, contexto: dict, pregunta_usuario: Optio
             }
         ],
     }
+    if temperature is not None:
+        body["temperature"] = temperature
 
     req = urllib.request.Request(
         ANTHROPIC_API_URL,

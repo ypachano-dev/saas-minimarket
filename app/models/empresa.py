@@ -31,8 +31,19 @@ class Empresa(Base):
     # Activación independiente de cada guía de IA para este inquilino (además de
     # depender de que su sector tenga habilitado el módulo que la respalda).
     agente_vale_activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    agente_vale_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agente_vale_modelo: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    agente_vale_temperatura: Mapped[float | None] = mapped_column(nullable=True)
+
     agente_yhorge_activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    agente_yhorge_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agente_yhorge_modelo: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    agente_yhorge_temperatura: Mapped[float | None] = mapped_column(nullable=True)
+
     agente_alo_activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    agente_alo_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agente_alo_modelo: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    agente_alo_temperatura: Mapped[float | None] = mapped_column(nullable=True)
 
     # Plantilla de ticket de Caja parametrizable por inquilino
     ticket_tamano_papel: Mapped[TicketTamanoPapel] = mapped_column(

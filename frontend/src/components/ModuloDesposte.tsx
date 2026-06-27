@@ -6,6 +6,7 @@ interface Producto {
   codigo_interno: string;
   nombre: string;
   linea: string | null;
+  clase_o_tipo: string | null;
   stock_total: number;
   tipo_venta: string;
   precio_1_detalle: number;
@@ -70,11 +71,30 @@ export default function ModuloDesposte({ solicitudId, productoOrigenIdPrellenado
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productoOrigenIdPrellenado, cantidadEstimadaPrellenada]);
 
-  // Filter products for source (must be sold by weight)
-  const productosOrigenList = productos.filter((p) => p.tipo_venta === "peso");
+  // Filter products for source (deben venderse por peso y tener stock real: no se puede
+  // despostar una materia prima que ya está agotada).
+  const productosOrigenList = productos.filter((p) => p.tipo_venta === "peso" && p.stock_total > 0);
 
   // Get selected source product details
   const prodOrigenSel = productos.find((p) => p.id === productoOrigenId);
+
+  // Cortes resultantes válidos para el producto de origen elegido: mismo departamento
+  // (línea, ej. "Carnicería") y, cuando ambos lo tengan etiquetado, misma especie/clase
+  // (ej. "POLLO" vs "CERDO") para no mezclar canales de animales distintos. Si alguno de
+  // los dos no tiene clase_o_tipo cargado, no se descarta por eso solo (degradación
+  // controlada mientras el catálogo no esté completamente etiquetado) — pero nunca se
+  // ofrece un producto de otro departamento (Alimentos, Verdulería, etc.) como corte, ni
+  // el propio producto de origen como su propio corte resultante.
+  const cortesCompatibles = prodOrigenSel
+    ? productos.filter((p) => {
+        if (p.id === prodOrigenSel.id) return false;
+        if (p.linea !== prodOrigenSel.linea) return false;
+        if (prodOrigenSel.clase_o_tipo && p.clase_o_tipo) {
+          return p.clase_o_tipo === prodOrigenSel.clase_o_tipo;
+        }
+        return true;
+      })
+    : [];
 
   // Calculations
   const pesoOrigenNum = Number(pesoOrigen) || 0;
@@ -357,8 +377,8 @@ export default function ModuloDesposte({ solicitudId, productoOrigenIdPrellenado
                       required
                       className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 font-semibold transition-all text-slate-800"
                     >
-                      <option value="">Seleccionar corte...</option>
-                      {productos.map((p) => (
+                      <option value="">{prodOrigenSel ? "Seleccionar corte..." : "Primero elija la materia prima"}</option>
+                      {cortesCompatibles.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.nombre} (${fmt(p.precio_1_detalle)}/kg)
                         </option>

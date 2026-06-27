@@ -1,20 +1,22 @@
 import calendar
 import datetime
+import logging
 import os
 from decimal import Decimal
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from app.core.security import (
     generar_hash_password, verificar_password, crear_access_token, get_current_user, verificar_rol,
     crear_token_autorizacion_precio, verificar_token_autorizacion_precio,
 )
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from sqlalchemy import func, and_
+from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import func, and_, text
 from sqlalchemy.orm import Session
 from typing import Generator, List, Optional
 
 # Importamos la conexión a la base de datos
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, engine
 from app.core.config import settings
 
 # Importamos los modelos físicos y el molde de validación
@@ -49,7 +51,7 @@ from app.core.ticket_config import TicketTamanoPapel, normalizar_tamano_papel
 from app.core.caja_config import EstadoTurno, METODOS_PAGO_CAJA, METODO_PAGO_VES
 from app.schemas import (
     RegistroEmpresaAdmin, LoginRequest, Token, TokenData,
-    EmpresaConfigResponse, NomenclaturaNegocioResponse, TicketConfigResponse, TicketConfigUpdate,
+    EmpresaConfigResponse, NomenclaturaNegocioResponse, TicketConfigResponse, TicketConfigUpdate, AgentesIAUpdate,
     AbrirTurnoRequest, CerrarTurnoRequest, TurnoCajaResponse, EstadoTurnoResponse, DesgloseMetodoPagoItem,
     AutorizarSupervisorRequest, AutorizarSupervisorResponse,
     ClienteCreate, ClienteUpdate, ClienteResponse,
@@ -106,12 +108,30 @@ ROLES_TURNO_CAJA = ["cajero", "admin", "propietario"]
 # Quien puede autorizar una modificación de precio en Caja (solo Gerencia/Propietario, nunca Cajero)
 ROLES_AUTORIZA_PRECIO = ["admin", "propietario"]
 
+logger = logging.getLogger("app")
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="1.0.0",
     docs_url="/docs",
     redoc_url=None
 )
+
+
+@app.exception_handler(SQLAlchemyError)
+def manejador_error_bd(request: Request, exc: SQLAlchemyError):
+    """Atrapa cualquier error de base de datos no manejado explícitamente en el endpoint
+    y evita exponer al cliente el SQL/parámetros internos (str(exc)). El detalle completo
+    queda solo en el log del servidor."""
+    logger.exception("Error de base de datos no controlado")
+    return JSONResponse(status_code=500, content={"detail": "Error interno al procesar la solicitud."})
+
+
+@app.exception_handler(Exception)
+def manejador_error_generico(request: Request, exc: Exception):
+    """Red de seguridad final: ningún stack trace o mensaje interno debe llegar al cliente."""
+    logger.exception("Error no controlado")
+    return JSONResponse(status_code=500, content={"detail": "Error interno al procesar la solicitud."})
 
 app.add_middleware(
     CORSMiddleware,
@@ -124,6 +144,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+def _crear_indices_defensivos() -> None:
+    """Cierra la ventana de condición de carrera en apertura de turno: el chequeo
+    'existente' + INSERT en abrir_turno_caja es check-then-act y dos peticiones
+    concurrentes podrían pasar ambas la validación antes de que la primera haga commit.
+    Este índice único parcial hace que la segunda inserción falle a nivel de BD."""
+    with engine.connect() as conn:
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_turno_caja_abierto_unico "
+            "ON turnocaja (empresa_id, usuario_id) WHERE estado = 'ABIERTO'"
+        ))
+        conn.commit()
 
 # Función puente para abrir y cerrar la base de datos automáticamente
 def get_db() -> Generator:
@@ -216,8 +249,9 @@ def registrar_empresa_y_admin(datos: RegistroEmpresaAdmin, db: Session = Depends
         }
         
     except Exception as e:
+        logger.exception("Error interno al procesar el registro")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error interno al procesar el registro: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno al procesar el registro.")
 
 # 3. Login: valida credenciales y devuelve un Token JWT con empresa_id y rol
 @app.post("/api/v1/auth/login", tags=["Autenticación SaaS"], response_model=Token)
@@ -276,8 +310,9 @@ def crear_cliente(
         db.commit()
         db.refresh(nuevo_cliente)
     except Exception as e:
+        logger.exception("Error al registrar el cliente")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el cliente: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el cliente.")
 
     return nuevo_cliente
 
@@ -347,8 +382,9 @@ def actualizar_cliente(
         db.commit()
         db.refresh(cliente)
     except Exception as e:
+        logger.exception("Error al actualizar el cliente")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar el cliente: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar el cliente.")
 
     return cliente
 
@@ -369,8 +405,9 @@ def crear_producto(
         db.commit()
         db.refresh(nuevo_producto)
     except Exception as e:
+        logger.exception("Error al crear el producto")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al crear el producto: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al crear el producto.")
 
     return nuevo_producto
 
@@ -435,8 +472,9 @@ def actualizar_producto(
         db.commit()
         db.refresh(producto)
     except Exception as e:
+        logger.exception("Error al actualizar el producto")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar el producto: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar el producto.")
 
     respuesta = ProductoResponse.model_validate(producto)
     stock_total = db.query(func.coalesce(func.sum(Lote.cantidad_actual), 0)).filter(
@@ -479,8 +517,9 @@ def crear_lote(
         db.commit()
         db.refresh(nuevo_lote)
     except Exception as e:
+        logger.exception("Error al registrar el lote")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el lote: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el lote.")
 
     return nuevo_lote
 
@@ -582,8 +621,9 @@ def crear_recepcion_mercancia(
         db.rollback()
         raise
     except Exception as e:
+        logger.exception("Error al registrar la recepción de mercancía")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la recepción de mercancía: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la recepción de mercancía.")
 
     return RecepcionMercanciaResponse(
         id=nueva_recepcion.id,
@@ -692,8 +732,9 @@ def crear_auditoria_inventario(
         db.commit()
         db.refresh(nueva_auditoria)
     except Exception as e:
+        logger.exception("Error al abrir la auditoría")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al abrir la auditoría: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al abrir la auditoría.")
 
     return _serializar_auditoria(db, nueva_auditoria)
 
@@ -754,8 +795,9 @@ def registrar_conteo_fisico(
         db.commit()
         db.refresh(item)
     except Exception as e:
+        logger.exception("Error al registrar el conteo")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el conteo: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el conteo.")
 
     producto = db.query(Producto).filter(Producto.id == item.producto_id).first()
     return AuditoriaInventarioItemResponse(
@@ -822,8 +864,9 @@ def cerrar_auditoria_inventario(
         db.commit()
         db.refresh(auditoria)
     except Exception as e:
+        logger.exception("Error al cerrar la auditoría")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al cerrar la auditoría: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al cerrar la auditoría.")
 
     return _serializar_auditoria(db, auditoria)
 
@@ -931,8 +974,9 @@ def crear_merma(
         db.commit()
         db.refresh(nueva_merma)
     except Exception as e:
+        logger.exception("Error al registrar la merma")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la merma: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la merma.")
 
     return nueva_merma
 
@@ -1091,8 +1135,9 @@ def crear_desposte(
         db.rollback()
         raise
     except Exception as e:
+        logger.exception("Error al registrar el desposte")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el desposte: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el desposte.")
 
     return _desposte_a_response(nuevo_desposte, items_creados)
 
@@ -1171,8 +1216,9 @@ def crear_solicitud_desposte(
         db.commit()
         db.refresh(nueva_solicitud)
     except Exception as e:
+        logger.exception("Error al crear la solicitud de desposte")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al crear la solicitud de desposte: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al crear la solicitud de desposte.")
 
     return _solicitud_a_response(db, nueva_solicitud)
 
@@ -1231,8 +1277,9 @@ def ejecutar_solicitud_desposte(
         db.rollback()
         raise
     except Exception as e:
+        logger.exception("Error al ejecutar la solicitud de desposte")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al ejecutar la solicitud de desposte: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al ejecutar la solicitud de desposte.")
 
     return _solicitud_a_response(db, solicitud)
 
@@ -1261,8 +1308,9 @@ def verificar_solicitud_desposte(
         db.commit()
         db.refresh(solicitud)
     except Exception as e:
+        logger.exception("Error al verificar la solicitud")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al verificar la solicitud: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al verificar la solicitud.")
 
     return _solicitud_a_response(db, solicitud)
 
@@ -1290,8 +1338,9 @@ def cancelar_solicitud_desposte(
         db.commit()
         db.refresh(solicitud)
     except Exception as e:
+        logger.exception("Error al cancelar la solicitud")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al cancelar la solicitud: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al cancelar la solicitud.")
 
     return _solicitud_a_response(db, solicitud)
 
@@ -1328,8 +1377,9 @@ def actualizar_tasa(
         db.commit()
         db.refresh(tasa)
     except Exception as e:
+        logger.exception("Error al actualizar la tasa de cambio")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar la tasa de cambio: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar la tasa de cambio.")
 
     return tasa
 
@@ -1518,8 +1568,9 @@ def crear_ticket(
         db.rollback()
         raise
     except Exception as e:
+        logger.exception("Error al registrar la venta")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la venta: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la venta.")
 
     tickets_respuesta = [
         TicketResponse(
@@ -1836,8 +1887,9 @@ def crear_postventa_log(
         db.commit()
         db.refresh(nuevo_log)
     except Exception as e:
+        logger.exception("Error al registrar la encuesta")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la encuesta: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la encuesta.")
         
     return SeguimientoBotResponse(
         id=nuevo_log.id,
@@ -1873,8 +1925,9 @@ def actualizar_postventa_log(
         db.commit()
         db.refresh(log)
     except Exception as e:
+        logger.exception("Error al actualizar la encuesta")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar la encuesta: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar la encuesta.")
         
     return SeguimientoBotResponse(
         id=log.id,
@@ -1914,8 +1967,9 @@ def crear_proveedor(
         db.commit()
         db.refresh(nuevo_proveedor)
     except Exception as e:
+        logger.exception("Error al registrar el proveedor")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el proveedor: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el proveedor.")
     return nuevo_proveedor
 
 # 21. Listar Proveedores (Aislamiento Multi-Tenant)
@@ -1958,8 +2012,9 @@ def actualizar_proveedor(
         db.commit()
         db.refresh(proveedor)
     except Exception as e:
+        logger.exception("Error al actualizar el proveedor")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar el proveedor: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar el proveedor.")
     return proveedor
 
 # 22. Crear Vehículo (Aislamiento Multi-Tenant)
@@ -1989,8 +2044,9 @@ def crear_vehiculo(
         db.commit()
         db.refresh(nuevo_vehiculo)
     except Exception as e:
+        logger.exception("Error al registrar el vehículo")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el vehículo: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el vehículo.")
     return nuevo_vehiculo
 
 # 23. Listar Vehículos (Aislamiento Multi-Tenant)
@@ -2034,8 +2090,9 @@ def actualizar_vehiculo(
         db.commit()
         db.refresh(vehiculo)
     except Exception as e:
+        logger.exception("Error al actualizar el vehículo")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar el vehículo: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar el vehículo.")
     return vehiculo
 
 # 23b. Reportar Posición GPS en Vivo del Vehículo (lo invoca el celular del repartidor
@@ -2062,8 +2119,9 @@ def actualizar_ubicacion_vehiculo(
         db.commit()
         db.refresh(vehiculo)
     except Exception as e:
+        logger.exception("Error al actualizar la ubicación del vehículo")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar la ubicación del vehículo: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar la ubicación del vehículo.")
 
     return vehiculo
 
@@ -2091,8 +2149,9 @@ def crear_usuario(
         db.commit()
         db.refresh(nuevo_usuario)
     except Exception as e:
+        logger.exception("Error al registrar el usuario")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el usuario: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el usuario.")
     return nuevo_usuario
 
 # 25. Listar Usuarios / Empleados (Aislamiento Multi-Tenant, solo Propietarios/Admin)
@@ -2138,8 +2197,9 @@ def actualizar_usuario(
         db.commit()
         db.refresh(usuario)
     except Exception as e:
+        logger.exception("Error al actualizar el usuario")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar el usuario: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar el usuario.")
     return usuario
 
 # 26. Analizar Foto de Producto con IA (Soporta una o dos fotos - frontal y trasera)
@@ -3038,8 +3098,9 @@ def crear_ticket_pesaje(
         db.commit()
         db.refresh(nuevo_ticket)
     except Exception as e:
+        logger.exception("Error al registrar el pesaje")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el pesaje: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el pesaje.")
 
     return TicketResponse(
         id=nuevo_ticket.id,
@@ -3094,8 +3155,9 @@ def actualizar_peso_ticket(
         db.commit()
         db.refresh(ticket)
     except Exception as e:
+        logger.exception("Error al modificar el peso del pesaje")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al modificar el peso del pesaje: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al modificar el peso del pesaje.")
 
     cliente = db.query(Cliente).filter(Cliente.id == ticket.cliente_id).first()
     tasa = db.query(TasaCambio).filter(TasaCambio.empresa_id == usuario_actual.eid).first()
@@ -3211,8 +3273,9 @@ def procesar_pago_tickets(
         db.rollback()
         raise
     except Exception as e:
+        logger.exception("Error al procesar el cobro")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al procesar el cobro: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al procesar el cobro.")
 
     return {"mensaje": "Cobro de balanza finalizado.", "tickets_actualizados": len(tickets_procesados)}
 
@@ -3348,6 +3411,12 @@ def abrir_turno_caja(
     try:
         db.commit()
         db.refresh(nuevo_turno)
+    except IntegrityError:
+        # El índice único parcial (ux_turno_caja_abierto_unico) detectó que otra
+        # petición concurrente ya abrió un turno para este usuario entre el chequeo
+        # 'existente' de arriba y este commit.
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Ya tienes un turno de caja abierto.")
     except Exception:
         db.rollback()
         raise HTTPException(status_code=400, detail="No se pudo abrir el turno de caja.")
@@ -3453,8 +3522,9 @@ def crear_pedido_delivery(
         db.commit()
         db.refresh(nuevo_pedido)
     except Exception as e:
+        logger.exception("Error al crear el pedido de delivery")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al crear el pedido de delivery: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al crear el pedido de delivery.")
     return nuevo_pedido
 
 @app.get("/api/v1/pedidos", tags=["Delivery"], response_model=List[PedidoDeliveryResponse])
@@ -3499,8 +3569,9 @@ def actualizar_estado_pedido(
         db.commit()
         db.refresh(pedido)
     except Exception as e:
+        logger.exception("Error al actualizar el estado del pedido")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar el estado del pedido: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar el estado del pedido.")
 
     return pedido
 
@@ -3534,8 +3605,9 @@ def crear_orden_compra(
         db.commit()
         db.refresh(nueva_orden)
     except Exception as e:
+        logger.exception("Error al registrar la orden de compra")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la orden de compra: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la orden de compra.")
     return nueva_orden
 
 @app.get("/api/v1/pedidos/ordenes", tags=["Compras"], response_model=List[OrdenCompraResponse])
@@ -3597,8 +3669,9 @@ def crear_cuenta_tesoreria(
         db.commit()
         db.refresh(nueva_cuenta)
     except Exception as e:
+        logger.exception("Error al registrar la cuenta")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la cuenta: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la cuenta.")
     return nueva_cuenta
 
 @app.get("/api/v1/tesoreria/cuentas", tags=["Tesorería"], response_model=List[CuentaTesoreriaResponse])
@@ -3650,8 +3723,9 @@ def crear_movimiento_tesoreria(
         db.commit()
         db.refresh(nuevo_movimiento)
     except Exception as e:
+        logger.exception("Error al registrar el movimiento")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el movimiento: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el movimiento.")
     return nuevo_movimiento
 
 @app.get("/api/v1/tesoreria/movimientos", tags=["Tesorería"], response_model=List[MovimientoTesoreriaResponse])
@@ -3732,8 +3806,9 @@ def crear_cxc(
         db.commit()
         db.refresh(nueva)
     except Exception as e:
+        logger.exception("Error al registrar la cuenta por cobrar")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la cuenta por cobrar: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la cuenta por cobrar.")
 
     return CuentaPorCobrarResponse(
         id=nueva.id, empresa_id=nueva.empresa_id, cliente_id=nueva.cliente_id, cliente_nombre=cliente.nombre,
@@ -3800,8 +3875,9 @@ def abonar_cxc(
         db.commit()
         db.refresh(cxc)
     except Exception as e:
+        logger.exception("Error al registrar el abono")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el abono: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el abono.")
 
     cliente = db.query(Cliente).filter(Cliente.id == cxc.cliente_id).first()
     return CuentaPorCobrarResponse(
@@ -3885,8 +3961,9 @@ def crear_cxp(
         db.commit()
         db.refresh(nueva)
     except Exception as e:
+        logger.exception("Error al registrar la cuenta por pagar")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la cuenta por pagar: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la cuenta por pagar.")
 
     return CuentaPorPagarResponse(
         id=nueva.id, empresa_id=nueva.empresa_id, proveedor_id=nueva.proveedor_id, proveedor_nombre=proveedor.nombre,
@@ -3947,8 +4024,9 @@ def abonar_cxp(
         db.commit()
         db.refresh(cxp)
     except Exception as e:
+        logger.exception("Error al registrar el abono")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar el abono: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar el abono.")
 
     proveedor = db.query(Proveedor).filter(Proveedor.id == cxp.proveedor_id).first()
     return CuentaPorPagarResponse(
@@ -4520,7 +4598,12 @@ def agente_vale(
     estadisticas = _calcular_estadisticas(db, usuario_actual.eid)
     contexto = estadisticas.model_dump(mode="json")
 
-    resultado = consultar_agente(VALE_SYSTEM_PROMPT, contexto, datos.pregunta)
+    empresa = db.query(Empresa).filter(Empresa.id == usuario_actual.eid).first()
+    system_prompt = (empresa.agente_vale_prompt or "").strip() or VALE_SYSTEM_PROMPT if empresa else VALE_SYSTEM_PROMPT
+    model = (empresa.agente_vale_modelo or "").strip() or None if empresa else None
+    temp = empresa.agente_vale_temperatura if empresa else None
+
+    resultado = consultar_agente(system_prompt, contexto, datos.pregunta, model=model, temperature=temp)
     if resultado["fuente"] == "ia" and resultado["respuesta"]:
         return AgenteRespuesta(agente="VALE", respuesta=resultado["respuesta"], fuente="ia")
     return AgenteRespuesta(agente="VALE", respuesta=_fallback_vale(contexto), fuente="reglas")
@@ -4565,7 +4648,12 @@ def agente_yhorge(
         "cxc_vencidas_detalle": vencidas_detalle,
     }
 
-    resultado = consultar_agente(YHORGE_SYSTEM_PROMPT, contexto, datos.pregunta)
+    empresa = db.query(Empresa).filter(Empresa.id == empresa_id).first()
+    system_prompt = (empresa.agente_yhorge_prompt or "").strip() or YHORGE_SYSTEM_PROMPT if empresa else YHORGE_SYSTEM_PROMPT
+    model = (empresa.agente_yhorge_modelo or "").strip() or None if empresa else None
+    temp = empresa.agente_yhorge_temperatura if empresa else None
+
+    resultado = consultar_agente(system_prompt, contexto, datos.pregunta, model=model, temperature=temp)
     if resultado["fuente"] == "ia" and resultado["respuesta"]:
         return AgenteRespuesta(agente="YHORGE", respuesta=resultado["respuesta"], fuente="ia")
     return AgenteRespuesta(agente="YHORGE", respuesta=_fallback_yhorge(contexto), fuente="reglas")
@@ -4641,7 +4729,12 @@ def agente_alo(
 
     contexto = _construir_contexto_alo(db, empresa_id, cliente, item_faltante=datos.contexto, pregunta=datos.pregunta)
 
-    resultado = consultar_agente(ALO_SYSTEM_PROMPT, contexto, datos.pregunta)
+    empresa = db.query(Empresa).filter(Empresa.id == empresa_id).first()
+    system_prompt = (empresa.agente_alo_prompt or "").strip() or ALO_SYSTEM_PROMPT if empresa else ALO_SYSTEM_PROMPT
+    model = (empresa.agente_alo_modelo or "").strip() or None if empresa else None
+    temp = empresa.agente_alo_temperatura if empresa else None
+
+    resultado = consultar_agente(system_prompt, contexto, datos.pregunta, model=model, temperature=temp)
     if resultado["fuente"] == "ia" and resultado["respuesta"]:
         return AgenteRespuesta(agente="ALO", respuesta=resultado["respuesta"], fuente="ia")
     return AgenteRespuesta(agente="ALO", respuesta=_fallback_alo(contexto), fuente="reglas")
@@ -4780,6 +4873,11 @@ def campana_alo(
     limite = max(1, min(datos.limite, 20))
     seleccionados = objetivo[:limite]
 
+    empresa = db.query(Empresa).filter(Empresa.id == empresa_id).first()
+    system_prompt = (empresa.agente_alo_prompt or "").strip() or ALO_SYSTEM_PROMPT if empresa else ALO_SYSTEM_PROMPT
+    model = (empresa.agente_alo_modelo or "").strip() or None if empresa else None
+    temp = empresa.agente_alo_temperatura if empresa else None
+
     generados: List[CampanaAloItem] = []
     hubo_ia = False
     for item in seleccionados:
@@ -4788,7 +4886,7 @@ def campana_alo(
             continue
         pregunta = f"Redacta un mensaje corto de WhatsApp para este cliente. Motivo interno (no lo menciones tal cual): {item.recomendacion}."
         contexto = _construir_contexto_alo(db, empresa_id, cliente, pregunta=pregunta)
-        resultado = consultar_agente(ALO_SYSTEM_PROMPT, contexto, pregunta)
+        resultado = consultar_agente(system_prompt, contexto, pregunta, model=model, temperature=temp)
         if resultado["fuente"] == "ia" and resultado["respuesta"]:
             mensaje = resultado["respuesta"]
             hubo_ia = True
@@ -4869,6 +4967,11 @@ def campana_alo_producto(
     limite = max(1, min(datos.limite, 50))
     cliente_ids = list(ofertas_por_cliente.keys())[:limite]
 
+    empresa = db.query(Empresa).filter(Empresa.id == empresa_id).first()
+    system_prompt = (empresa.agente_alo_prompt or "").strip() or ALO_SYSTEM_PROMPT if empresa else ALO_SYSTEM_PROMPT
+    model = (empresa.agente_alo_modelo or "").strip() or None if empresa else None
+    temp = empresa.agente_alo_temperatura if empresa else None
+
     generados: List[CandidatoProductoItem] = []
     hubo_ia = False
     for cliente_id in cliente_ids:
@@ -4885,7 +4988,7 @@ def campana_alo_producto(
         contexto = _construir_contexto_alo(db, empresa_id, cliente, pregunta=pregunta)
         contexto["ofertas_producto"] = ofertas_cliente
 
-        resultado = consultar_agente(ALO_SYSTEM_PROMPT, contexto, pregunta)
+        resultado = consultar_agente(system_prompt, contexto, pregunta, model=model, temperature=temp)
         if resultado["fuente"] == "ia" and resultado["respuesta"]:
             mensaje = resultado["respuesta"]
             hubo_ia = True
@@ -4943,8 +5046,17 @@ def obtener_mi_config_empresa(
         modulos_habilitados=config["modulos_base"],
         nomenclatura=NomenclaturaNegocioResponse(**config["nomenclatura"]),
         agente_vale_activo=empresa.agente_vale_activo,
+        agente_vale_prompt=empresa.agente_vale_prompt,
+        agente_vale_modelo=empresa.agente_vale_modelo,
+        agente_vale_temperatura=empresa.agente_vale_temperatura,
         agente_yhorge_activo=empresa.agente_yhorge_activo,
+        agente_yhorge_prompt=empresa.agente_yhorge_prompt,
+        agente_yhorge_modelo=empresa.agente_yhorge_modelo,
+        agente_yhorge_temperatura=empresa.agente_yhorge_temperatura,
         agente_alo_activo=empresa.agente_alo_activo,
+        agente_alo_prompt=empresa.agente_alo_prompt,
+        agente_alo_modelo=empresa.agente_alo_modelo,
+        agente_alo_temperatura=empresa.agente_alo_temperatura,
         ticket_config=TicketConfigResponse(
             tamano_papel=normalizar_tamano_papel(empresa.ticket_tamano_papel),
             mostrar_logo=empresa.ticket_mostrar_logo,
@@ -4994,6 +5106,88 @@ def actualizar_config_ticket(
         desglosar_impuestos=empresa.ticket_desglosar_impuestos,
     )
 
+# 1b. Activar/desactivar las guías de IA (VALE/YHORGE/ALO) de la propia empresa ya existente.
+# El formulario de "Crear Empresa" en la Consola SaaS solo las fija una vez al registrar el
+# tenant; este endpoint cubre el caso de editarlas después, desde Configuración de Tienda.
+@app.put("/api/v1/empresa/config-agentes", tags=["Empresa"], response_model=EmpresaConfigResponse)
+def actualizar_config_agentes(
+    datos: AgentesIAUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION)),
+) -> EmpresaConfigResponse:
+    empresa = db.query(Empresa).filter(Empresa.id == usuario_actual.eid).first()
+    if not empresa:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada.")
+
+    if datos.agente_vale_activo is not None:
+        empresa.agente_vale_activo = datos.agente_vale_activo
+    if datos.agente_vale_prompt is not None:
+        empresa.agente_vale_prompt = datos.agente_vale_prompt
+    if datos.agente_vale_modelo is not None:
+        empresa.agente_vale_modelo = datos.agente_vale_modelo
+    if datos.agente_vale_temperatura is not None:
+        empresa.agente_vale_temperatura = datos.agente_vale_temperatura
+
+    if datos.agente_yhorge_activo is not None:
+        empresa.agente_yhorge_activo = datos.agente_yhorge_activo
+    if datos.agente_yhorge_prompt is not None:
+        empresa.agente_yhorge_prompt = datos.agente_yhorge_prompt
+    if datos.agente_yhorge_modelo is not None:
+        empresa.agente_yhorge_modelo = datos.agente_yhorge_modelo
+    if datos.agente_yhorge_temperatura is not None:
+        empresa.agente_yhorge_temperatura = datos.agente_yhorge_temperatura
+
+    if datos.agente_alo_activo is not None:
+        empresa.agente_alo_activo = datos.agente_alo_activo
+    if datos.agente_alo_prompt is not None:
+        empresa.agente_alo_prompt = datos.agente_alo_prompt
+    if datos.agente_alo_modelo is not None:
+        empresa.agente_alo_modelo = datos.agente_alo_modelo
+    if datos.agente_alo_temperatura is not None:
+        empresa.agente_alo_temperatura = datos.agente_alo_temperatura
+
+    try:
+        db.commit()
+        db.refresh(empresa)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se pudo guardar la configuración de agentes.")
+
+    tipo_negocio = normalizar_tipo_negocio(empresa.tipo_negocio)
+    config = NEGOCIO_CONFIG[tipo_negocio]
+    return EmpresaConfigResponse(
+        id=empresa.id,
+        rif=empresa.rif,
+        nombre_comercial=empresa.nombre_comercial,
+        nombre_corto=empresa.nombre_corto,
+        tipo_negocio=tipo_negocio,
+        color_primario=empresa.color_primario,
+        color_secundario=empresa.color_secundario,
+        logo_url=empresa.logo_url,
+        modulos_habilitados=config["modulos_base"],
+        nomenclatura=NomenclaturaNegocioResponse(**config["nomenclatura"]),
+        agente_vale_activo=empresa.agente_vale_activo,
+        agente_vale_prompt=empresa.agente_vale_prompt,
+        agente_vale_modelo=empresa.agente_vale_modelo,
+        agente_vale_temperatura=empresa.agente_vale_temperatura,
+        agente_yhorge_activo=empresa.agente_yhorge_activo,
+        agente_yhorge_prompt=empresa.agente_yhorge_prompt,
+        agente_yhorge_modelo=empresa.agente_yhorge_modelo,
+        agente_yhorge_temperatura=empresa.agente_yhorge_temperatura,
+        agente_alo_activo=empresa.agente_alo_activo,
+        agente_alo_prompt=empresa.agente_alo_prompt,
+        agente_alo_modelo=empresa.agente_alo_modelo,
+        agente_alo_temperatura=empresa.agente_alo_temperatura,
+        ticket_config=TicketConfigResponse(
+            tamano_papel=normalizar_tamano_papel(empresa.ticket_tamano_papel),
+            mostrar_logo=empresa.ticket_mostrar_logo,
+            mostrar_rif=empresa.ticket_mostrar_rif,
+            texto_cabecera=empresa.ticket_texto_cabecera,
+            texto_pie=empresa.ticket_texto_pie,
+            desglosar_impuestos=empresa.ticket_desglosar_impuestos,
+        ),
+    )
+
 # 2. Actualizar posición GPS del vendedor
 @app.post("/api/v1/usuarios/gps", tags=["Fuerza de Ventas"])
 def actualizar_gps_vendedor(
@@ -5015,8 +5209,9 @@ def actualizar_gps_vendedor(
         db.commit()
         return {"status": "ok", "mensaje": "Ubicacion GPS actualizada con exito."}
     except Exception as e:
+        logger.exception("Error al actualizar ubicacion")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar ubicacion: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar ubicacion.")
 
 # 3. Obtener ubicaciones de todos los vendedores de la empresa (para el mapa gerencial)
 @app.get("/api/v1/usuarios/vendedores/ubicaciones", tags=["Fuerza de Ventas"], response_model=List[VendedorUbicacionResponse])
@@ -5071,8 +5266,9 @@ def crear_visita_cliente(
         db.refresh(nueva_visita)
         return nueva_visita
     except Exception as e:
+        logger.exception("Error al registrar la visita")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la visita: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la visita.")
 
 # 5. Obtener historial de visitas de un cliente
 @app.get("/api/v1/visitas/cliente/{cliente_id}", tags=["Fuerza de Ventas"], response_model=List[VisitaClienteResponse])
@@ -5152,8 +5348,9 @@ def crear_encuesta_inventario(
     try:
         db.commit()
     except Exception as e:
+        logger.exception("Error al registrar la encuesta")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar la encuesta: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar la encuesta.")
 
     return EncuestaInventarioSaveResponse(status="success", visita_id=nueva_visita.id, items_guardados=items_guardados)
 
@@ -5465,8 +5662,9 @@ def crear_orden_venta(
             res.items[idx].producto_nombre = prod.nombre if prod else "Desconocido"
         return res
     except Exception as e:
+        logger.exception("Error al registrar orden de venta")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar orden de venta: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar orden de venta.")
 
 # 8. Obtener órdenes de venta de un cliente
 @app.get("/api/v1/ventas/ordenes/cliente/{cliente_id}", tags=["Fuerza de Ventas"], response_model=List[OrdenVentaResponse])
@@ -5539,8 +5737,9 @@ def actualizar_estado_orden_venta(
             res.items[idx].producto_nombre = prod.nombre if prod else "Desconocido"
         return res
     except Exception as e:
+        logger.exception("Error al actualizar orden")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar orden: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar orden.")
 
 # 11. Crear plan de ruta de vendedor
 @app.post("/api/v1/rutas", tags=["Fuerza de Ventas"], response_model=RutaVendedorResponse, status_code=status.HTTP_201_CREATED)
@@ -5587,8 +5786,9 @@ def crear_ruta_vendedor(
                 res.actividades[idx].cliente_nombre = cli.nombre if cli else None
         return res
     except Exception as e:
+        logger.exception("Error al registrar ruta")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al registrar ruta: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al registrar ruta.")
 
 # 12. Listar rutas de la empresa (o del vendedor actual)
 @app.get("/api/v1/rutas", tags=["Fuerza de Ventas"], response_model=List[RutaVendedorResponse])
@@ -5652,8 +5852,9 @@ def actualizar_estado_ruta(
                 res.actividades[idx].cliente_nombre = cli.nombre if cli else None
         return res
     except Exception as e:
+        logger.exception("Error al actualizar estado de ruta")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al actualizar estado de ruta: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al actualizar estado de ruta.")
 
 # 14. Reportar avance de actividad diaria (vendedor)
 @app.post("/api/v1/rutas/actividades/{actividad_id}/avance", tags=["Fuerza de Ventas"], response_model=RutaActividadResponse)
@@ -5693,8 +5894,9 @@ def actualizar_avance_actividad(
             res.cliente_nombre = cli.nombre if cli else None
         return res
     except Exception as e:
+        logger.exception("Error al reportar avance")
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error al reportar avance: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error al reportar avance.")
 
 # 15. Feed de actividad reciente de la fuerza de ventas (visitas, ordenes, avances de ruta) para el Dashboard
 @app.get("/api/v1/dashboard/actividad-rtc", tags=["Fuerza de Ventas"], response_model=List[ActividadRtcItem])

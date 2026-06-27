@@ -52,8 +52,20 @@ class EmpresaConfigResponse(BaseModel):
     modulos_habilitados: List[str]
     nomenclatura: NomenclaturaNegocioResponse
     agente_vale_activo: bool
+    agente_vale_prompt: Optional[str] = None
+    agente_vale_modelo: Optional[str] = None
+    agente_vale_temperatura: Optional[float] = None
+
     agente_yhorge_activo: bool
+    agente_yhorge_prompt: Optional[str] = None
+    agente_yhorge_modelo: Optional[str] = None
+    agente_yhorge_temperatura: Optional[float] = None
+
     agente_alo_activo: bool
+    agente_alo_prompt: Optional[str] = None
+    agente_alo_modelo: Optional[str] = None
+    agente_alo_temperatura: Optional[float] = None
+
     ticket_config: "TicketConfigResponse"
 
 # Molde de salida con la plantilla de ticket de Caja vigente para el inquilino
@@ -73,6 +85,23 @@ class TicketConfigUpdate(BaseModel):
     texto_cabecera: Optional[str] = None
     texto_pie: Optional[str] = None
     desglosar_impuestos: Optional[bool] = None
+
+# Molde de entrada para activar/desactivar las guías de IA (VALE/YHORGE/ALO) de una empresa ya existente
+class AgentesIAUpdate(BaseModel):
+    agente_vale_activo: Optional[bool] = None
+    agente_vale_prompt: Optional[str] = None
+    agente_vale_modelo: Optional[str] = None
+    agente_vale_temperatura: Optional[float] = None
+
+    agente_yhorge_activo: Optional[bool] = None
+    agente_yhorge_prompt: Optional[str] = None
+    agente_yhorge_modelo: Optional[str] = None
+    agente_yhorge_temperatura: Optional[float] = None
+
+    agente_alo_activo: Optional[bool] = None
+    agente_alo_prompt: Optional[str] = None
+    agente_alo_modelo: Optional[str] = None
+    agente_alo_temperatura: Optional[float] = None
 
 EmpresaConfigResponse.model_rebuild()
 

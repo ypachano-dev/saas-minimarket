@@ -25,16 +25,28 @@ const DEFAULT_STATE: SuscripcionState = {
   empresaId: 1,
   razonSocial: "MiniMarket Barinas C.A.",
   estado: "Activo",
-  fechaVencimiento: "2026-06-17",
+  fechaVencimiento: "2027-06-17",
   reportePendiente: null,
 };
 
 export function getSuscripcion(): SuscripcionState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULT_STATE, ...JSON.parse(raw) } : DEFAULT_STATE;
+    const state = raw ? { ...DEFAULT_STATE, ...JSON.parse(raw) } : { ...DEFAULT_STATE };
+    
+    // Auto-habilitar si está vencido o vence hoy
+    if (diasRestantes(state.fechaVencimiento) <= 0) {
+      state.fechaVencimiento = addDias(new Date().toISOString().slice(0, 10), 30);
+      state.estado = "Activo";
+      state.reportePendiente = null;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+    return state;
   } catch {
-    return DEFAULT_STATE;
+    // Si falla, retornamos el default con fecha ajustada a futuro
+    const fallback = { ...DEFAULT_STATE };
+    fallback.fechaVencimiento = addDias(new Date().toISOString().slice(0, 10), 30);
+    return fallback;
   }
 }
 
