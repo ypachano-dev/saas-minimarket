@@ -929,6 +929,13 @@ class DesposteSolicitudVerificar(BaseModel):
 class DesposteSolicitudCancelar(BaseModel):
     motivo: Optional[str] = None
 
+# Edición de una solicitud todavía pendiente (antes de que Balanza la ejecute):
+# solo el solicitante original puede ajustar cantidad/comentario/departamento.
+class DesposteSolicitudEditar(BaseModel):
+    cantidad_estimada: Optional[Decimal] = None
+    comentario_solicitud: Optional[str] = None
+    departamento: Optional[str] = None
+
 class DesposteSolicitudResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -950,8 +957,16 @@ class DesposteSolicitudResponse(BaseModel):
     verificado_en: Optional[datetime.datetime] = None
     comentario_verificacion: Optional[str] = None
     cancelado_motivo: Optional[str] = None
+    cancelado_por_id: Optional[int] = None
+    cancelado_por_nombre: Optional[str] = None
+    editado_por_id: Optional[int] = None
+    editado_por_nombre: Optional[str] = None
+    editado_en: Optional[datetime.datetime] = None
     created_at: datetime.datetime
     desposte: Optional[DesposteResponse] = None
+    # Calculado según quién consulta: True si el usuario actual puede editar/eliminar
+    # esta solicitud (mismo grupo Caja/Balanza que el solicitante original, o admin/propietario).
+    puede_gestionar: bool = False
 
 # --- Esquemas para Recepción de Mercancía (Ingreso / Descarga unificados) ---
 

@@ -58,5 +58,11 @@ class DesposteSolicitud(Base):
     comentario_verificacion: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     cancelado_motivo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancelado_por_id: Mapped[int | None] = mapped_column(ForeignKey("usuario.id", ondelete="SET NULL"), nullable=True)
+
+    # Huella de auditoría: quién fue la última persona en editar cantidad/comentario/depto
+    # mientras la solicitud seguía "pendiente" (puede ser distinta de quien la creó).
+    editado_por_id: Mapped[int | None] = mapped_column(ForeignKey("usuario.id", ondelete="SET NULL"), nullable=True)
+    editado_en: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())

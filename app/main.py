@@ -73,7 +73,7 @@ from app.schemas import (
     AgenteConsulta, AgenteRespuesta, AloConsulta,
     DesposteCreate, DesposteResponse, DesposteItemResponse, DesposteItemCreate,
     DesposteSolicitudCreate, DesposteSolicitudEjecutar, DesposteSolicitudVerificar,
-    DesposteSolicitudCancelar, DesposteSolicitudResponse,
+    DesposteSolicitudCancelar, DesposteSolicitudEditar, DesposteSolicitudResponse,
     RecepcionMercanciaCreate, RecepcionMercanciaResponse, RecepcionMercanciaItemResponse,
     AuditoriaInventarioCreate, AuditoriaInventarioResponse, AuditoriaInventarioItemResponse, ConteoFisicoUpdate,
     StockProyectadoItem,
@@ -103,6 +103,11 @@ ROLES_DESPOSTE = ["admin", "propietario", "carnicero", "verdulero", "charcutero"
 ROLES_LECTURA_CARTERA = ROLES_GESTION + ["vendedor"]
 # Quien puede solicitar y verificar un desposte desde Caja (no ejecutarlo: eso es ROLES_DESPOSTE)
 ROLES_SOLICITUD_DESPOSTE = ["admin", "propietario", "cajero"]
+# Roles de departamento de Balanza (subconjunto de ROLES_DESPOSTE sin admin/propietario), usados
+# para decidir si una solicitud de desposte pertenece al "grupo" Caja o al "grupo" Balanza: cualquier
+# cajero puede editar/eliminar lo que envió Caja (con huella de quién lo hizo), pero Balanza no puede
+# tocar lo que Caja envió, y viceversa. admin/propietario siempre pueden gestionar cualquiera.
+ROLES_DEPARTAMENTO_BALANZA = ["carnicero", "verdulero", "charcutero"]
 # Quien puede abrir/operar un turno de Caja (Cajero o Gerencia)
 ROLES_TURNO_CAJA = ["cajero", "admin", "propietario"]
 # Quien puede autorizar una modificación de precio en Caja (solo Gerencia/Propietario, nunca Cajero)
@@ -279,7 +284,8 @@ def login(datos: LoginRequest, db: Session = Depends(get_db)):
             "sub": str(usuario.id),
             "eid": usuario.empresa_id,
             "rol": usuario.rol,
-            "email": usuario.email
+            "email": usuario.email,
+            "nombre": usuario.nombre
         }
     )
 
@@ -1166,7 +1172,20 @@ def listar_desposte(
 
 # --- Solicitudes de Desposte: flujo Caja (solicita) -> Balanza (ejecuta) -> Caja (verifica) ---
 
-def _solicitud_a_response(db: Session, s: DesposteSolicitud) -> DesposteSolicitudResponse:
+def _grupo_desposte(rol: str | None) -> str:
+    """Caja (admin/propietario/cajero/etc.) vs. Balanza (carnicero/verdulero/charcutero)."""
+    return "balanza" if rol in ROLES_DEPARTAMENTO_BALANZA else "caja"
+
+def _puede_gestionar_solicitud(db: Session, s: DesposteSolicitud, usuario_actual: TokenData) -> bool:
+    """Misma regla que usan editar_solicitud_desposte/cancelar_solicitud_desposte: admin/propietario
+    siempre pueden, y cualquier usuario del mismo grupo (Caja o Balanza) que el solicitante original."""
+    if usuario_actual.rol in ("admin", "propietario"):
+        return True
+    creador = db.query(Usuario).filter(Usuario.id == s.solicitado_por_id).first() if s.solicitado_por_id else None
+    grupo_creador = _grupo_desposte(creador.rol if creador else None)
+    return _grupo_desposte(usuario_actual.rol) == grupo_creador
+
+def _solicitud_a_response(db: Session, s: DesposteSolicitud, usuario_actual: TokenData) -> DesposteSolicitudResponse:
     res = DesposteSolicitudResponse.model_validate(s)
     producto = db.query(Producto).filter(Producto.id == s.producto_origen_id).first()
     res.producto_origen_nombre = producto.nombre if producto else None
@@ -1179,11 +1198,18 @@ def _solicitud_a_response(db: Session, s: DesposteSolicitud) -> DesposteSolicitu
     if s.verificado_por_id:
         verificador = db.query(Usuario).filter(Usuario.id == s.verificado_por_id).first()
         res.verificado_por_nombre = verificador.nombre if verificador else None
+    if s.cancelado_por_id:
+        cancelador = db.query(Usuario).filter(Usuario.id == s.cancelado_por_id).first()
+        res.cancelado_por_nombre = cancelador.nombre if cancelador else None
+    if s.editado_por_id:
+        editor = db.query(Usuario).filter(Usuario.id == s.editado_por_id).first()
+        res.editado_por_nombre = editor.nombre if editor else None
     if s.desposte_id:
         desposte = db.query(Desposte).filter(Desposte.id == s.desposte_id).first()
         if desposte:
             items = db.query(DesposteItem).filter(DesposteItem.desposte_id == desposte.id).all()
             res.desposte = _desposte_a_response(desposte, items)
+    res.puede_gestionar = s.estatus == "pendiente" and _puede_gestionar_solicitud(db, s, usuario_actual)
     return res
 
 # 12e. Crear solicitud de desposte (Caja): declara la necesidad, NO mueve stock todavía.
@@ -1220,7 +1246,7 @@ def crear_solicitud_desposte(
         db.rollback()
         raise HTTPException(status_code=400, detail="Error al crear la solicitud de desposte.")
 
-    return _solicitud_a_response(db, nueva_solicitud)
+    return _solicitud_a_response(db, nueva_solicitud, usuario_actual)
 
 # 12f. Listar solicitudes de desposte: Balanza ve su cola de "pendiente" por defecto;
 #      Caja puede filtrar por estatus=completado para ver lo que falta verificar.
@@ -1236,7 +1262,7 @@ def listar_solicitudes_desposte(
     if departamento:
         query = query.filter(DesposteSolicitud.departamento == departamento)
     solicitudes = query.order_by(DesposteSolicitud.created_at.asc()).all()
-    return [_solicitud_a_response(db, s) for s in solicitudes]
+    return [_solicitud_a_response(db, s, usuario_actual) for s in solicitudes]
 
 # 12g. Ejecutar solicitud (Balanza): pesa el producto real y registra los cortes resultantes.
 #      Aquí es donde efectivamente se descuenta el producto origen y se acredita lo despostado,
@@ -1281,7 +1307,7 @@ def ejecutar_solicitud_desposte(
         db.rollback()
         raise HTTPException(status_code=400, detail="Error al ejecutar la solicitud de desposte.")
 
-    return _solicitud_a_response(db, solicitud)
+    return _solicitud_a_response(db, solicitud, usuario_actual)
 
 # 12h. Verificar y archivar (Caja): confirma que el resultado del desposte ya ejecutado es correcto.
 @app.patch("/api/v1/desposte-solicitudes/{solicitud_id}/verificar", tags=["Desposte"], response_model=DesposteSolicitudResponse)
@@ -1312,10 +1338,53 @@ def verificar_solicitud_desposte(
         db.rollback()
         raise HTTPException(status_code=400, detail="Error al verificar la solicitud.")
 
-    return _solicitud_a_response(db, solicitud)
+    return _solicitud_a_response(db, solicitud, usuario_actual)
 
-# 12i. Cancelar (Caja o Balanza): solo posible antes de ejecutar, ya que después de "completado"
-#      el stock real ya se movió (cualquier discrepancia se maneja como Merma aparte).
+# 12i. Editar (mismo grupo Caja/Balanza que el solicitante, o admin/propietario): ajusta
+#      cantidad/comentario/departamento mientras la solicitud sigue "pendiente", antes de que
+#      Balanza la ejecute y mueva stock real. Deja huella de quién la editó por última vez.
+@app.patch("/api/v1/desposte-solicitudes/{solicitud_id}/editar", tags=["Desposte"], response_model=DesposteSolicitudResponse)
+def editar_solicitud_desposte(
+    solicitud_id: int,
+    datos: DesposteSolicitudEditar,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_DESPOSTE + ROLES_SOLICITUD_DESPOSTE))
+):
+    solicitud = db.query(DesposteSolicitud).filter(
+        DesposteSolicitud.id == solicitud_id,
+        DesposteSolicitud.empresa_id == usuario_actual.eid
+    ).first()
+    if not solicitud:
+        raise HTTPException(status_code=404, detail="Solicitud de desposte no encontrada.")
+    if solicitud.estatus != "pendiente":
+        raise HTTPException(status_code=400, detail=f"Solo se pueden editar solicitudes pendientes (actual: '{solicitud.estatus}').")
+    if not _puede_gestionar_solicitud(db, solicitud, usuario_actual):
+        raise HTTPException(status_code=403, detail="Esta solicitud pertenece al otro flujo (Caja/Balanza) y no puedes modificarla.")
+
+    if datos.cantidad_estimada is not None:
+        if datos.cantidad_estimada <= 0:
+            raise HTTPException(status_code=400, detail="La cantidad estimada debe ser mayor a cero.")
+        solicitud.cantidad_estimada = datos.cantidad_estimada
+    if datos.comentario_solicitud is not None:
+        solicitud.comentario_solicitud = datos.comentario_solicitud
+    if datos.departamento is not None:
+        solicitud.departamento = datos.departamento
+    solicitud.editado_por_id = usuario_actual.usuario_id
+    solicitud.editado_en = datetime.datetime.now()
+
+    try:
+        db.commit()
+        db.refresh(solicitud)
+    except Exception:
+        logger.exception("Error al editar la solicitud de desposte")
+        db.rollback()
+        raise HTTPException(status_code=400, detail="No se pudo editar la solicitud de desposte.")
+
+    return _solicitud_a_response(db, solicitud, usuario_actual)
+
+# 12j. Cancelar (mismo grupo Caja/Balanza que el solicitante, o admin/propietario): solo posible
+#      antes de ejecutar, ya que después de "completado" el stock real ya se movió (cualquier
+#      discrepancia se maneja como Merma aparte). Deja huella de quién la canceló/eliminó.
 @app.patch("/api/v1/desposte-solicitudes/{solicitud_id}/cancelar", tags=["Desposte"], response_model=DesposteSolicitudResponse)
 def cancelar_solicitud_desposte(
     solicitud_id: int,
@@ -1331,9 +1400,12 @@ def cancelar_solicitud_desposte(
         raise HTTPException(status_code=404, detail="Solicitud de desposte no encontrada.")
     if solicitud.estatus != "pendiente":
         raise HTTPException(status_code=400, detail=f"Solo se pueden cancelar solicitudes pendientes (actual: '{solicitud.estatus}').")
+    if not _puede_gestionar_solicitud(db, solicitud, usuario_actual):
+        raise HTTPException(status_code=403, detail="Esta solicitud pertenece al otro flujo (Caja/Balanza) y no puedes eliminarla.")
 
     solicitud.estatus = "cancelado"
     solicitud.cancelado_motivo = datos.motivo
+    solicitud.cancelado_por_id = usuario_actual.usuario_id
     try:
         db.commit()
         db.refresh(solicitud)
@@ -1342,7 +1414,7 @@ def cancelar_solicitud_desposte(
         db.rollback()
         raise HTTPException(status_code=400, detail="Error al cancelar la solicitud.")
 
-    return _solicitud_a_response(db, solicitud)
+    return _solicitud_a_response(db, solicitud, usuario_actual)
 
 # 13. Actualizar la tasa BCV de la empresa (Bolívares por Dólar). Si no existe, se crea.
 @app.put("/api/v1/tasa", tags=["Tasa de Cambio"], response_model=TasaCambioResponse)

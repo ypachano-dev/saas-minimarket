@@ -61,6 +61,18 @@ function getRolFromToken(): string | null {
   }
 }
 
+// Decodifica el claim "nombre" del JWT, para mostrar quién está operando la estación
+function getNombreFromToken(): string | null {
+  const token = localStorage.getItem("access_token");
+  if (!token) return null;
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.nombre ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ModuloBalanza() {
   const [tasaBcv, setTasaBcv] = useState(602.33);
   const [tasaEur, setTasaEur] = useState<number | null>(null);
@@ -71,6 +83,7 @@ export default function ModuloBalanza() {
 
   // Role and department state
   const [userRol, setUserRol] = useState<string | null>(null);
+  const [userNombre, setUserNombre] = useState<string | null>(null);
   const [deptActivo, setDeptActivo] = useState("Carnicería");
 
   // Client management states
@@ -195,6 +208,7 @@ export default function ModuloBalanza() {
   useEffect(() => {
     const rol = getRolFromToken();
     setUserRol(rol);
+    setUserNombre(getNombreFromToken());
     if (rol === "carnicero") {
       setDeptActivo("Carnicería");
     } else if (rol === "verdulero") {
@@ -625,6 +639,7 @@ export default function ModuloBalanza() {
           <div className="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-2">
             <span className="block text-[10px] font-bold text-blue-400 uppercase tracking-wider">Perfil Operativo</span>
             <span className="font-semibold text-blue-700 capitalize">{userRol ? userRol : "Cargando..."}</span>
+            {userNombre && <span className="block text-[11px] font-medium text-blue-500 normal-case">{userNombre}</span>}
           </div>
         </div>
       </div>

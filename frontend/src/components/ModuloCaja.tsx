@@ -22,6 +22,19 @@ function mapearRolSupervisor(rolBackend: string | null): RolSupervisor | null {
   return MAPA_ROL_BACKEND[rolBackend] ?? null;
 }
 
+// FastAPI puede responder el campo "detail" como string (HTTPException) o como
+// un array de errores de validación pydantic ({type, loc, msg, ...}). Renderizar
+// ese array directamente como children de JSX rompe React, así que siempre lo
+// normalizamos a texto antes de guardarlo en un estado de error.
+function extraerMensajeError(err: any, mensajePorDefecto: string): string {
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => d?.msg ?? String(d)).join(" ") || mensajePorDefecto;
+  }
+  return mensajePorDefecto;
+}
+
 interface ClienteLite {
   id: number;
   nombre: string;
@@ -101,11 +114,22 @@ function SeguimientoDesposteCaja({
   pendientes, completadas, mostrarVerificar, setMostrarVerificar, verificandoId, onVerificar,
   mostrarHistorial, onToggleHistorial, historial,
   mostrarSolicitar, setMostrarSolicitar, onCreadoSolicitud,
+  edicion, onEliminar, eliminandoId, errorAccion,
 }: {
   pendientes: any[]; completadas: any[]; mostrarVerificar: boolean; setMostrarVerificar: (fn: (v: boolean) => boolean) => void;
   verificandoId: number | null; onVerificar: (id: number) => void;
   mostrarHistorial: boolean; onToggleHistorial: () => void; historial: any[];
   mostrarSolicitar: boolean; setMostrarSolicitar: (v: boolean) => void; onCreadoSolicitud: () => void;
+  edicion: {
+    editandoId: number | null;
+    cantidad: string; setCantidad: (v: string) => void;
+    comentario: string; setComentario: (v: string) => void;
+    guardando: boolean;
+    onIniciar: (s: any) => void;
+    onGuardar: (id: number) => void;
+    onCancelar: () => void;
+  };
+  onEliminar: (id: number) => void; eliminandoId: number | null; errorAccion: string;
 }) {
   return (
     <>
@@ -116,20 +140,81 @@ function SeguimientoDesposteCaja({
             <span className="text-xl">⏳</span>
             <h4 className="font-black tracking-tight text-sm text-amber-900">DESPOSTE PENDIENTE EN BALANZA ({pendientes.length})</h4>
           </div>
-          {pendientes.map((s) => (
-            <div key={s.id} className="flex items-center justify-between gap-3 bg-white rounded-2xl border border-amber-100 px-4 py-2.5">
-              <div>
-                <p className="text-xs font-bold text-slate-800">
-                  {s.producto_origen_nombre} — {Number(s.cantidad_estimada).toFixed(3)} kg estimados · {s.departamento}
-                </p>
-                <p className="text-[10px] text-slate-400">
-                  Solicitado por {s.solicitado_por_nombre ?? "—"} el {new Date(s.created_at).toLocaleString("es-VE")}
-                  {s.comentario_solicitud ? ` — "${s.comentario_solicitud}"` : ""}
-                </p>
+          {errorAccion && <p className="text-xs font-semibold text-rose-600 px-1">{errorAccion}</p>}
+          {pendientes.map((s) =>
+            edicion.editandoId === s.id ? (
+              <div key={s.id} className="bg-white rounded-2xl border border-amber-200 px-4 py-3 space-y-2">
+                <p className="text-xs font-bold text-slate-800">{s.producto_origen_nombre} · {s.departamento}</p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="number" min={0} step="0.001"
+                    value={edicion.cantidad}
+                    onChange={(e) => edicion.setCantidad(e.target.value)}
+                    placeholder="Cantidad estimada (kg)"
+                    className="flex-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <input
+                    type="text"
+                    value={edicion.comentario}
+                    onChange={(e) => edicion.setComentario(e.target.value)}
+                    placeholder="Comentario (opcional)"
+                    className="flex-[2] rounded-xl border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={edicion.onCancelar} className="text-xs font-bold text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-xl bg-slate-100">
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={edicion.guardando}
+                    onClick={() => edicion.onGuardar(s.id)}
+                    className="text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 px-3 py-1.5 rounded-xl"
+                  >
+                    {edicion.guardando ? "Guardando..." : "Guardar cambios"}
+                  </button>
+                </div>
               </div>
-              <span className="bg-amber-100 text-amber-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase whitespace-nowrap">Esperando a Balanza</span>
-            </div>
-          ))}
+            ) : (
+              <div key={s.id} className="flex items-center justify-between gap-3 bg-white rounded-2xl border border-amber-100 px-4 py-2.5">
+                <div>
+                  <p className="text-xs font-bold text-slate-800">
+                    {s.producto_origen_nombre} — {Number(s.cantidad_estimada).toFixed(3)} kg estimados · {s.departamento}
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    Solicitado por {s.solicitado_por_nombre ?? "—"} el {new Date(s.created_at).toLocaleString("es-VE")}
+                    {s.comentario_solicitud ? ` — "${s.comentario_solicitud}"` : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 whitespace-nowrap">
+                  {s.puede_gestionar && (
+                    <>
+                      <button
+                        type="button"
+                        title="Editar solicitud"
+                        aria-label={`Editar solicitud #${s.id}`}
+                        onClick={() => edicion.onIniciar(s)}
+                        className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        type="button"
+                        title="Eliminar solicitud"
+                        aria-label={`Eliminar solicitud #${s.id}`}
+                        disabled={eliminandoId === s.id}
+                        onClick={() => onEliminar(s.id)}
+                        className="flex h-7 w-7 items-center justify-center rounded-full bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:opacity-50 transition-colors"
+                      >
+                        🗑️
+                      </button>
+                    </>
+                  )}
+                  <span className="bg-amber-100 text-amber-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Esperando a Balanza</span>
+                </div>
+              </div>
+            )
+          )}
         </div>
       )}
 
@@ -276,6 +361,7 @@ export default function ModuloCaja() {
   const [mostrarHistorialVentas, setMostrarHistorialVentas] = useState(false);
   const [cargandoHistorialVentas, setCargandoHistorialVentas] = useState(false);
   const [ticketReimprimirDatos, setTicketReimprimirDatos] = useState<TicketDatosVM | null>(null);
+  const [ticketVisualizarDatos, setTicketVisualizarDatos] = useState<TicketDatosVM | null>(null);
 
   // --- Tasa, Database and pending tickets ---
   const [tasaBcv, setTasaBcv] = useState(DEFAULT_TASA_BCV);
@@ -331,6 +417,12 @@ export default function ModuloCaja() {
   const [verificandoId, setVerificandoId] = useState<number | null>(null);
   const [mostrarHistorialDesposte, setMostrarHistorialDesposte] = useState(false);
   const [historialDesposte, setHistorialDesposte] = useState<any[]>([]);
+  const [editandoSolicitudId, setEditandoSolicitudId] = useState<number | null>(null);
+  const [cantidadEditDesposte, setCantidadEditDesposte] = useState("");
+  const [comentarioEditDesposte, setComentarioEditDesposte] = useState("");
+  const [guardandoEdicionDesposte, setGuardandoEdicionDesposte] = useState(false);
+  const [eliminandoSolicitudId, setEliminandoSolicitudId] = useState<number | null>(null);
+  const [errorAccionDesposte, setErrorAccionDesposte] = useState("");
 
   const cargarSolicitudesPendientesDesposte = useCallback(() => {
     apiClient.get("/api/v1/desposte-solicitudes", { params: { estatus: "pendiente" } })
@@ -397,7 +489,7 @@ export default function ModuloCaja() {
       setFondoInicialVes("");
       setPasswordApertura("");
     } catch (err: any) {
-      setErrorApertura(err?.response?.data?.detail || "No se pudo abrir el turno de caja.");
+      setErrorApertura(extraerMensajeError(err, "No se pudo abrir el turno de caja."));
     } finally {
       setAbriendoTurno(false);
     }
@@ -425,7 +517,7 @@ export default function ModuloCaja() {
       setItemsPrecioDesbloqueado((prev) => new Set(prev).add(itemAutorizando));
       setItemAutorizando(null);
     } catch (err: any) {
-      setErrorAutorizacion(err?.response?.data?.detail || "No se pudo validar la autorización de gerencia.");
+      setErrorAutorizacion(extraerMensajeError(err, "No se pudo validar la autorización de gerencia."));
     } finally {
       setAutorizandoSupervisor(false);
     }
@@ -475,7 +567,7 @@ export default function ModuloCaja() {
       setTurnoActivo(null);
       setTicketArqueoImprimir(data);
     } catch (err: any) {
-      setErrorArqueo(err?.response?.data?.detail || "No se pudo cerrar el turno de caja.");
+      setErrorArqueo(extraerMensajeError(err, "No se pudo cerrar el turno de caja."));
     } finally {
       setCerrandoTurno(false);
     }
@@ -517,6 +609,62 @@ export default function ModuloCaja() {
       setVerificandoId(null);
     }
   }
+
+  // Abre el formulario inline de edición precargado con los valores actuales de la solicitud
+  function iniciarEdicionDesposte(s: any) {
+    setErrorAccionDesposte("");
+    setEditandoSolicitudId(s.id);
+    setCantidadEditDesposte(String(s.cantidad_estimada));
+    setComentarioEditDesposte(s.comentario_solicitud ?? "");
+  }
+
+  async function guardarEdicionDesposte(id: number) {
+    const cantidad = Number(cantidadEditDesposte);
+    if (!cantidad || cantidad <= 0) {
+      setErrorAccionDesposte("La cantidad estimada debe ser mayor a cero.");
+      return;
+    }
+    setGuardandoEdicionDesposte(true);
+    setErrorAccionDesposte("");
+    try {
+      await apiClient.patch(`/api/v1/desposte-solicitudes/${id}/editar`, {
+        cantidad_estimada: cantidad,
+        comentario_solicitud: comentarioEditDesposte || null,
+      });
+      setEditandoSolicitudId(null);
+      cargarSolicitudesPendientesDesposte();
+    } catch (err: any) {
+      setErrorAccionDesposte(extraerMensajeError(err, "No se pudo editar la solicitud de desposte."));
+    } finally {
+      setGuardandoEdicionDesposte(false);
+    }
+  }
+
+  async function eliminarSolicitudDesposte(id: number) {
+    if (!window.confirm("¿Eliminar esta solicitud de desposte pendiente? Esta acción no se puede deshacer.")) return;
+    setEliminandoSolicitudId(id);
+    setErrorAccionDesposte("");
+    try {
+      await apiClient.patch(`/api/v1/desposte-solicitudes/${id}/cancelar`, { motivo: "Eliminada por el solicitante" });
+      cargarSolicitudesPendientesDesposte();
+    } catch (err: any) {
+      setErrorAccionDesposte(extraerMensajeError(err, "No se pudo eliminar la solicitud de desposte."));
+    } finally {
+      setEliminandoSolicitudId(null);
+    }
+  }
+
+  const edicionDesposteProps = {
+    editandoId: editandoSolicitudId,
+    cantidad: cantidadEditDesposte,
+    setCantidad: setCantidadEditDesposte,
+    comentario: comentarioEditDesposte,
+    setComentario: setComentarioEditDesposte,
+    guardando: guardandoEdicionDesposte,
+    onIniciar: iniciarEdicionDesposte,
+    onGuardar: guardarEdicionDesposte,
+    onCancelar: () => setEditandoSolicitudId(null),
+  };
 
   // --- Cola de clientes en espera ---
   const [colaClientes, setColaClientes] = useState<any[]>([]);
@@ -884,12 +1032,12 @@ export default function ModuloCaja() {
     });
   }
 
-  // Aísla y reimprime un ticket histórico vía window.print(), sin alterar la venta
-  // (carrito/cliente) que el cajero tenga abierta en pantalla en este instante.
-  function reimprimirTicketHistorial(ticket: VentaHistorialItem) {
+  // Arma los datos de ticket compartidos por reimpresión y visualización, a partir
+  // de una línea del historial de ventas del día.
+  function construirTicketDatosHistorial(ticket: VentaHistorialItem): TicketDatosVM {
     const producto = dbProductos.find((p) => p.id === ticket.producto_id);
     const nombreProducto = producto ? producto.nombre : `Producto #${ticket.producto_id}`;
-    setTicketReimprimirDatos({
+    return {
       nombreComercial: empresaTicketInfo.nombre_comercial,
       rif: empresaTicketInfo.rif,
       logoUrl: empresaTicketInfo.logo_url,
@@ -903,7 +1051,18 @@ export default function ModuloCaja() {
       lineas: [{ label: nombreProducto, monto: ticket.monto_usd }],
       totalUsd: ticket.monto_usd,
       totalVes: ticket.monto_ves,
-    });
+    };
+  }
+
+  // Aísla y reimprime un ticket histórico vía window.print(), sin alterar la venta
+  // (carrito/cliente) que el cajero tenga abierta en pantalla en este instante.
+  function reimprimirTicketHistorial(ticket: VentaHistorialItem) {
+    setTicketReimprimirDatos(construirTicketDatosHistorial(ticket));
+  }
+
+  // Muestra el ticket histórico en un modal de solo lectura, sin disparar window.print().
+  function visualizarTicketHistorial(ticket: VentaHistorialItem) {
+    setTicketVisualizarDatos(construirTicketDatosHistorial(ticket));
   }
 
   // Final check-out execution
@@ -1262,6 +1421,10 @@ export default function ModuloCaja() {
           mostrarSolicitar={mostrarSolicitarDesposte}
           setMostrarSolicitar={setMostrarSolicitarDesposte}
           onCreadoSolicitud={cargarSolicitudesPendientesDesposte}
+          edicion={edicionDesposteProps}
+          onEliminar={eliminarSolicitudDesposte}
+          eliminandoId={eliminandoSolicitudId}
+          errorAccion={errorAccionDesposte}
         />
 
         {/* Header Section */}
@@ -1332,6 +1495,15 @@ export default function ModuloCaja() {
                     <div className="flex items-center gap-3">
                       <span className="font-mono font-semibold text-slate-700">${fmt(t.monto_usd)}</span>
                       <span className="font-mono text-[10px] text-slate-400">Bs. {fmt(t.monto_ves)}</span>
+                      <button
+                        type="button"
+                        onClick={() => visualizarTicketHistorial(t)}
+                        title="Visualizar ticket"
+                        aria-label={`Visualizar ticket #${t.id}`}
+                        className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                      >
+                        👁️
+                      </button>
                       <button
                         type="button"
                         onClick={() => reimprimirTicketHistorial(t)}
@@ -1616,6 +1788,38 @@ export default function ModuloCaja() {
             </div>
           </div>
         )}
+
+        {/* Reimpresión aislada de un ticket del historial: oculto en pantalla, visible solo
+            al imprimir (.ticket-imprimible). No toca el carrito/cliente activo en pantalla. */}
+        {ticketReimprimirDatos && (
+          <div className="ticket-imprimible ticket-oculto-pantalla">
+            <TicketTermico config={ticketConfig} datos={ticketReimprimirDatos} />
+          </div>
+        )}
+
+        {/* --- Modal: Visualizar ticket del historial (solo lectura, no imprime) --- */}
+        {ticketVisualizarDatos && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-fade-in"
+            onClick={() => setTicketVisualizarDatos(null)}
+          >
+            <div className="w-full max-w-sm bg-white rounded-3xl border border-slate-200 shadow-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black tracking-tight text-slate-700 uppercase">Vista previa del ticket</h3>
+                <button
+                  type="button"
+                  onClick={() => setTicketVisualizarDatos(null)}
+                  className="text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-full transition-all"
+                >
+                  Cerrar
+                </button>
+              </div>
+              <div className="max-h-[70vh] overflow-y-auto border border-slate-100 rounded-2xl">
+                <TicketTermico config={ticketConfig} datos={ticketVisualizarDatos} />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1655,6 +1859,10 @@ export default function ModuloCaja() {
         mostrarSolicitar={mostrarSolicitarDesposte}
         setMostrarSolicitar={setMostrarSolicitarDesposte}
         onCreadoSolicitud={cargarSolicitudesPendientesDesposte}
+        edicion={edicionDesposteProps}
+        onEliminar={eliminarSolicitudDesposte}
+        eliminandoId={eliminandoSolicitudId}
+        errorAccion={errorAccionDesposte}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -2464,6 +2672,30 @@ export default function ModuloCaja() {
       {ticketReimprimirDatos && (
         <div className="ticket-imprimible ticket-oculto-pantalla">
           <TicketTermico config={ticketConfig} datos={ticketReimprimirDatos} />
+        </div>
+      )}
+
+      {/* --- Modal: Visualizar ticket del historial (solo lectura, no imprime) --- */}
+      {ticketVisualizarDatos && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-fade-in"
+          onClick={() => setTicketVisualizarDatos(null)}
+        >
+          <div className="w-full max-w-sm bg-white rounded-3xl border border-slate-200 shadow-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black tracking-tight text-slate-700 uppercase">Vista previa del ticket</h3>
+              <button
+                type="button"
+                onClick={() => setTicketVisualizarDatos(null)}
+                className="text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-full transition-all"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="max-h-[70vh] overflow-y-auto border border-slate-100 rounded-2xl">
+              <TicketTermico config={ticketConfig} datos={ticketVisualizarDatos} />
+            </div>
+          </div>
         </div>
       )}
 
