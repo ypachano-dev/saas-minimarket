@@ -44,6 +44,23 @@ sentía confuso: pedía 4 campos para una sola identidad de acceso.
 - `+ whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)`
 - `+ tiktok: Mapped[str | None] = mapped_column(String(100), nullable=True)`
 - `+ x: Mapped[str | None] = mapped_column(String(100), nullable=True)`
+- `+ modulos_override: Mapped[dict | None] = mapped_column(JSON, nullable=True)`
+
+### Hallazgo adicional: el toggle de módulos no aplicaba de verdad
+
+Al diseñar el catálogo se descubrió que `modulos_habilitados` (devuelto por
+`GET /api/v1/empresa/mi-config`) se calcula **siempre** a partir de
+`NEGOCIO_CONFIG[tipo_negocio]["modulos_base"]` (`app/core/negocio_config.py`),
+ignorando por completo cualquier matriz de módulos marcada en el formulario.
+El toggle era puramente decorativo. Este spec lo corrige: `modulos_override`
+en `Empresa` guarda el resultado de la matriz (precargada desde el plan,
+ajustable por empresa); los dos endpoints que construyen
+`EmpresaConfigResponse` (`app/main.py:5110` y `:5231`) pasan a calcular
+`modulos_habilitados` como la combinación de `modulos_base` con
+`modulos_override` cuando este último no es `None` — si `modulos_override`
+trae `{"pos": false}`, ese módulo se quita de la lista aunque
+`tipo_negocio` lo incluya; si trae `{"crm": true}` y `tipo_negocio` no lo
+incluye, se agrega.
 
 Todas nullable porque las empresas existentes no tienen estos datos.
 
