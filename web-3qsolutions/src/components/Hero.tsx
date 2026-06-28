@@ -23,6 +23,7 @@ export default function Hero() {
           transition={{ duration: 3.5, repeat: Infinity, ease: 'easeInOut' }}
         />
         <div className="absolute top-0 left-0 w-full h-24 sm:h-32 bg-gradient-to-b from-bg-base to-transparent" />
+        <div className="absolute bottom-0 left-0 w-full h-24 sm:h-32 bg-gradient-to-t from-bg-base to-transparent" />
       </div>
 
       <div className="max-w-7xl w-full mx-auto px-8 md:px-16 lg:px-20 relative z-10 grid grid-cols-12 gap-x-4 md:gap-x-8 pt-[28vh] sm:pt-[34vh]">
