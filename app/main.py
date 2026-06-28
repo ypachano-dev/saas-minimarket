@@ -22,6 +22,7 @@ from app.core.config import settings
 # Importamos los modelos físicos y el molde de validación
 from app.models.empresa import Empresa
 from app.models.usuario import Usuario
+from app.models.plan import Plan
 from app.models.producto import Producto
 from app.models.lote import Lote
 from app.models.merma import Merma
@@ -50,7 +51,7 @@ from app.core.negocio_config import TipoNegocio, NEGOCIO_CONFIG, GUIAS_AGENTES_I
 from app.core.ticket_config import TicketTamanoPapel, normalizar_tamano_papel
 from app.core.caja_config import EstadoTurno, METODOS_PAGO_CAJA, METODO_PAGO_VES
 from app.schemas import (
-    RegistroEmpresaAdmin, LoginRequest, Token, TokenData,
+    RegistroEmpresaAdmin, LoginRequest, Token, TokenData, PlanResponse, PlanUpdate,
     EmpresaConfigResponse, NomenclaturaNegocioResponse, TicketConfigResponse, TicketConfigUpdate, AgentesIAUpdate,
     AbrirTurnoRequest, CerrarTurnoRequest, TurnoCajaResponse, EstadoTurnoResponse, DesgloseMetodoPagoItem,
     AutorizarSupervisorRequest, AutorizarSupervisorResponse,
@@ -217,6 +218,14 @@ def registrar_empresa_y_admin(datos: RegistroEmpresaAdmin, db: Session = Depends
             agente_vale_activo=datos.agente_vale_activo,
             agente_yhorge_activo=datos.agente_yhorge_activo,
             agente_alo_activo=datos.agente_alo_activo,
+            plan_id=datos.plan_id,
+            sitio_web=datos.sitio_web,
+            instagram=datos.instagram,
+            facebook=datos.facebook,
+            whatsapp=datos.whatsapp,
+            tiktok=datos.tiktok,
+            x=datos.x,
+            modulos_override=datos.modulos_override,
             status="activo"
         )
         db.add(nueva_empresa)
@@ -227,6 +236,7 @@ def registrar_empresa_y_admin(datos: RegistroEmpresaAdmin, db: Session = Depends
             empresa_id=nueva_empresa.id,
             nombre=datos.nombre_admin,             # Ajustado a tu columna 'nombre'
             email=datos.email_admin,
+            telefono=datos.telefono_admin,
             password_hash=generar_hash_password(datos.password_admin[:72]),   # ¡AHORA SÍ, ENCRIPTADO SEGURO!
             rol="propietario",  # Dueño del negocio: acceso total bajo el esquema RBAC (admin/propietario)
             status=True                           # Ajustado a tu columna 'status' tipo Boolean
@@ -258,7 +268,44 @@ def registrar_empresa_y_admin(datos: RegistroEmpresaAdmin, db: Session = Depends
         db.rollback()
         raise HTTPException(status_code=500, detail="Error interno al procesar el registro.")
 
-# 3. Login: valida credenciales y devuelve un Token JWT con empresa_id y rol
+
+# 3. Catálogo de Planes de Suscripción (Básico / Pro / Max)
+@app.get("/api/v1/planes", tags=["Planes"], response_model=list[PlanResponse])
+def listar_planes(
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(get_current_user),
+):
+    return db.query(Plan).order_by(Plan.precio_mensual).all()
+
+
+@app.put("/api/v1/planes/{plan_id}", tags=["Planes"], response_model=PlanResponse)
+def actualizar_plan(
+    plan_id: int,
+    datos: PlanUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(["propietario"])),
+):
+    plan = db.query(Plan).filter(Plan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan no encontrado.")
+
+    plan.precio_mensual = datos.precio_mensual
+    plan.limite_usuarios = datos.limite_usuarios
+    plan.modulos = datos.modulos
+    plan.agente_vale_incluido = datos.agente_vale_incluido
+    plan.agente_yhorge_incluido = datos.agente_yhorge_incluido
+    plan.agente_alo_incluido = datos.agente_alo_incluido
+
+    try:
+        db.commit()
+        db.refresh(plan)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se pudo guardar el plan.")
+    return plan
+
+
+# 4. Login: valida credenciales y devuelve un Token JWT con empresa_id y rol
 @app.post("/api/v1/auth/login", tags=["Autenticación SaaS"], response_model=Token)
 def login(datos: LoginRequest, db: Session = Depends(get_db)):
 
@@ -5090,6 +5137,22 @@ def campana_alo_producto(
 # --- MÓDULO FUERZA DE VENTAS (GPS, Visitas, Cotizaciones, Rutas y Viáticos) ---
 # ==============================================================================
 
+def calcular_modulos_habilitados(modulos_base: list[str], modulos_override: dict | None) -> list[str]:
+    """Combina los módulos base de tipo_negocio con el ajuste fino por
+    empresa (Empresa.modulos_override). Una clave True en el override agrega
+    el módulo aunque tipo_negocio no lo traiga; False lo quita aunque
+    tipo_negocio lo traiga; una clave ausente respeta tipo_negocio."""
+    if not modulos_override:
+        return modulos_base
+    resultado = set(modulos_base)
+    for clave, incluido in modulos_override.items():
+        if incluido:
+            resultado.add(clave)
+        else:
+            resultado.discard(clave)
+    return sorted(resultado)
+
+
 # 1. Obtener configuración de marca de la empresa (branding y tipo de negocio).
 # El sector (TipoNegocio) determina, de forma estricta y centralizada en
 # app/core/negocio_config.py, tanto los módulos activos como la nomenclatura
@@ -5115,7 +5178,7 @@ def obtener_mi_config_empresa(
         color_primario=empresa.color_primario,
         color_secundario=empresa.color_secundario,
         logo_url=empresa.logo_url,
-        modulos_habilitados=config["modulos_base"],
+        modulos_habilitados=calcular_modulos_habilitados(config["modulos_base"], empresa.modulos_override),
         nomenclatura=NomenclaturaNegocioResponse(**config["nomenclatura"]),
         agente_vale_activo=empresa.agente_vale_activo,
         agente_vale_prompt=empresa.agente_vale_prompt,
@@ -5236,7 +5299,7 @@ def actualizar_config_agentes(
         color_primario=empresa.color_primario,
         color_secundario=empresa.color_secundario,
         logo_url=empresa.logo_url,
-        modulos_habilitados=config["modulos_base"],
+        modulos_habilitados=calcular_modulos_habilitados(config["modulos_base"], empresa.modulos_override),
         nomenclatura=NomenclaturaNegocioResponse(**config["nomenclatura"]),
         agente_vale_activo=empresa.agente_vale_activo,
         agente_vale_prompt=empresa.agente_vale_prompt,
