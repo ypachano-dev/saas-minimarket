@@ -1,12 +1,11 @@
 import datetime
 from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
-from typing import List, Optional
+from typing import Dict, List, Optional
 from app.core.negocio_config import TipoNegocio
 from app.core.ticket_config import TicketTamanoPapel
 from app.core.caja_config import EstadoTurno
 
-# Este es el molde de lo que el navegador debe enviar para registrar un negocio
 class RegistroEmpresaAdmin(BaseModel):
     # Datos de la Empresa
     nombre_empresa: str
@@ -14,6 +13,14 @@ class RegistroEmpresaAdmin(BaseModel):
     telefono: Optional[str] = None
     direccion: Optional[str] = None
     tipo_negocio: Optional[TipoNegocio] = TipoNegocio.MINIMARKET
+    plan_id: Optional[int] = None
+    sitio_web: Optional[str] = None
+    instagram: Optional[str] = None
+    facebook: Optional[str] = None
+    whatsapp: Optional[str] = None
+    tiktok: Optional[str] = None
+    x: Optional[str] = None
+    modulos_override: Optional[dict] = None
 
     # Branding del inquilino (nombre corto, logo y paleta de colores)
     nombre_corto: Optional[str] = None
@@ -26,11 +33,31 @@ class RegistroEmpresaAdmin(BaseModel):
     agente_yhorge_activo: bool = True
     agente_alo_activo: bool = True
 
-    # Datos del Dueño / Administrador
+    # Datos del Dueño (también su identidad de acceso: inicia sesión con email_admin)
     nombre_admin: str
-    username_admin: str
     email_admin: str
+    telefono_admin: Optional[str] = None
     password_admin: str
+
+# Molde de salida para un plan del catálogo (Básico/Pro/Max)
+class PlanResponse(BaseModel):
+    id: int
+    nombre: str
+    precio_mensual: float
+    limite_usuarios: int
+    modulos: Dict[str, bool]
+    agente_vale_incluido: bool
+    agente_yhorge_incluido: bool
+    agente_alo_incluido: bool
+
+# Molde de entrada para editar un plan existente
+class PlanUpdate(BaseModel):
+    precio_mensual: float
+    limite_usuarios: int
+    modulos: Dict[str, bool]
+    agente_vale_incluido: bool
+    agente_yhorge_incluido: bool
+    agente_alo_incluido: bool
 
 # Molde de salida con la nomenclatura de inventario/ventas según el sector del inquilino
 class NomenclaturaNegocioResponse(BaseModel):
