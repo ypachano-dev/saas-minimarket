@@ -8,6 +8,7 @@ export const MODULOS_ERP = [
   { key: "estadisticas", label: "Estadísticas Avanzadas y Demandas" },
   { key: "almacen", label: "Gestión de Almacén (Inventario/Carga/Descarga)" },
   { key: "tesoreria", label: "Bancos y Tesorería (Flujos de efectivo $, Bs y Bancos)" },
+  { key: "ficha", label: "Ficha de Catálogo" },
 ];
 
 export const AGENTES_IA = [
