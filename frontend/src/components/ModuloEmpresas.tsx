@@ -1,11 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import apiClient from "../api/client";
 import { useSuscripcion, addDias } from "../state/suscripcion";
 import { APP_NAME, FIRMA_PROVEEDOR } from "../config/brand";
 import MatrizModulosAgentes, { MODULOS_ERP, type AgenteIAKey } from "./empresas/MatrizModulosAgentes";
-import CatalogoPlanes from "./empresas/CatalogoPlanes";
-
-const PLANES = ["Básico", "Profesional", "Premium", "Custom"];
+import CatalogoPlanes, { type PlanCatalogo } from "./empresas/CatalogoPlanes";
 
 const TIPOS_NEGOCIO = [
   { value: "minimarket", label: "Minimarket" },
@@ -82,22 +80,31 @@ const EMPRESAS_INICIALES: Empresa[] = [
 ];
 
 const initialForm = {
+  // Datos de la Empresa
   rif: "",
   razonSocial: "",
   telefono: "",
-  plan: PLANES[0],
-  limiteUsuarios: "",
+  direccion: "",
   tipoNegocio: TIPOS_NEGOCIO[0].value as string,
   nombreCorto: "",
   logoUrl: "",
+  sitioWeb: "",
+  instagram: "",
+  facebook: "",
+  whatsapp: "",
+  tiktok: "",
+  x: "",
   colorPrimario: "#00ebc7",
   colorSecundario: "#111936",
-  nombreAdmin: "",
-  emailAdmin: "",
-  usuarioAdmin: "",
-  claveTemporal: "",
+  // Plan y vigencia
+  planId: "",
   fechaInicio: today(),
   fechaVencimiento: "",
+  // Datos del Dueño (también su identidad de acceso)
+  nombreAdmin: "",
+  emailAdmin: "",
+  telefonoAdmin: "",
+  claveTemporal: "",
 };
 
 const initialModulos: Record<string, boolean> = Object.fromEntries(MODULOS_ERP.map((m) => [m.key, false]));
@@ -151,9 +158,22 @@ export default function ModuloEmpresas() {
   const [pagoForm, setPagoForm] = useState(initialPagoForm);
   const [pagoError, setPagoError] = useState("");
   const [suscripcion, actualizarSuscripcion] = useSuscripcion();
+  const [catalogoPlanes, setCatalogoPlanes] = useState<PlanCatalogo[]>([]);
+
+  useEffect(() => {
+    apiClient.get<PlanCatalogo[]>("/api/v1/planes").then(({ data }) => setCatalogoPlanes(data));
+  }, []);
 
   function set<K extends keyof typeof initialForm>(key: K, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function seleccionarPlan(planIdStr: string) {
+    set("planId", planIdStr);
+    const plan = catalogoPlanes.find((p) => String(p.id) === planIdStr);
+    if (!plan) return;
+    setModulos(plan.modulos);
+    setAgentesIA({ vale: plan.agente_vale_incluido, yhorge: plan.agente_yhorge_incluido, alo: plan.agente_alo_incluido });
   }
 
   function toggleModulo(key: string) {
@@ -168,24 +188,18 @@ export default function ModuloEmpresas() {
     e.preventDefault();
     setError("");
 
-    if (!form.rif.trim() || !form.razonSocial.trim() || !form.telefono.trim() || !form.limiteUsuarios.trim()) {
-      setError("RIF, Razón Social, Teléfono y Límite de Usuarios son obligatorios.");
+    if (!form.rif.trim() || !form.razonSocial.trim() || !form.telefono.trim()) {
+      setError("RIF, Razón Social y Teléfono de la Empresa son obligatorios.");
       return;
     }
 
-    if (!form.nombreAdmin.trim() || !form.emailAdmin.trim() || !form.usuarioAdmin.trim() || !form.claveTemporal.trim()) {
-      setError("Nombre del Administrador, Correo, Usuario Administrador Inicial y Clave Primaria Temporal son obligatorios.");
+    if (!form.nombreAdmin.trim() || !form.emailAdmin.trim() || !form.claveTemporal.trim()) {
+      setError("Nombre del Dueño, Correo y Clave Temporal son obligatorios.");
       return;
     }
 
     if (!form.fechaVencimiento) {
       setError("La Fecha de Vencimiento es obligatoria.");
-      return;
-    }
-
-    const limite = Number(form.limiteUsuarios);
-    if (Number.isNaN(limite) || limite <= 0) {
-      setError("Límite de Usuarios debe ser un número mayor a 0.");
       return;
     }
 
@@ -195,7 +209,16 @@ export default function ModuloEmpresas() {
         nombre_empresa: form.razonSocial.trim(),
         rif_or_cedula: form.rif.trim(),
         telefono: form.telefono.trim(),
+        direccion: form.direccion.trim() || null,
         tipo_negocio: form.tipoNegocio,
+        plan_id: form.planId ? Number(form.planId) : null,
+        sitio_web: form.sitioWeb.trim() || null,
+        instagram: form.instagram.trim() || null,
+        facebook: form.facebook.trim() || null,
+        whatsapp: form.whatsapp.trim() || null,
+        tiktok: form.tiktok.trim() || null,
+        x: form.x.trim() || null,
+        modulos_override: modulos,
         nombre_corto: form.nombreCorto.trim() || null,
         logo_url: form.logoUrl.trim() || null,
         color_primario: form.colorPrimario,
@@ -204,8 +227,8 @@ export default function ModuloEmpresas() {
         agente_yhorge_activo: agentesIA.yhorge,
         agente_alo_activo: agentesIA.alo,
         nombre_admin: form.nombreAdmin.trim(),
-        username_admin: form.usuarioAdmin.trim(),
         email_admin: form.emailAdmin.trim(),
+        telefono_admin: form.telefonoAdmin.trim() || null,
         password_admin: form.claveTemporal,
       });
     } catch (err: any) {
@@ -215,17 +238,19 @@ export default function ModuloEmpresas() {
     }
     setEnviando(false);
 
+    const planSeleccionado = catalogoPlanes.find((p) => String(p.id) === form.planId);
+
     const nuevaEmpresa: Empresa = {
       id: empresas.length ? Math.max(...empresas.map((emp) => emp.id)) + 1 : 1,
       rif: form.rif.trim(),
       razonSocial: form.razonSocial.trim(),
       telefono: form.telefono.trim(),
-      plan: form.plan,
-      limiteUsuarios: limite,
+      plan: planSeleccionado?.nombre ?? "Sin plan",
+      limiteUsuarios: planSeleccionado?.limite_usuarios ?? 0,
       usuariosCreados: 1,
       estado: "Activo",
       modulos: { ...modulos },
-      usuarioAdmin: form.usuarioAdmin.trim(),
+      usuarioAdmin: form.emailAdmin.trim(),
       fechaInicio: form.fechaInicio,
       fechaVencimiento: form.fechaVencimiento,
       pagos: [],
@@ -338,70 +363,29 @@ export default function ModuloEmpresas() {
       <CatalogoPlanes />
 
       <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-100/80 bg-white p-8 shadow-sm hover:shadow-md transition-all duration-300 space-y-8">
-        {/* --- Alta de Empresa --- */}
+        {/* --- Datos de la Empresa --- */}
         <section>
-          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Alta de Empresa</h3>
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Datos de la Empresa</h3>
           <div className="mt-3 grid grid-cols-2 gap-4">
             <label className="flex flex-col">
               <span className={labelCls}>RIF</span>
-              <input
-                className={inputCls}
-                value={form.rif}
-                onChange={(e) => set("rif", formatRif(e.target.value))}
-                placeholder="J-12345678-0"
-                maxLength={12}
-                required
-              />
+              <input className={inputCls} value={form.rif} onChange={(e) => set("rif", formatRif(e.target.value))} placeholder="J-12345678-0" maxLength={12} required />
             </label>
             <label className="flex flex-col">
               <span className={labelCls}>Razón Social</span>
-              <input
-                className={inputCls}
-                value={form.razonSocial}
-                onChange={(e) => set("razonSocial", e.target.value)}
-                placeholder="Ej: MiniMarket Barinas C.A."
-                required
-              />
+              <input className={inputCls} value={form.razonSocial} onChange={(e) => set("razonSocial", e.target.value)} placeholder="Ej: MiniMarket Barinas C.A." required />
             </label>
             <label className="flex flex-col">
-              <span className={labelCls}>Teléfono</span>
-              <input
-                className={inputCls}
-                value={form.telefono}
-                onChange={(e) => set("telefono", e.target.value)}
-                placeholder="+584141234567"
-                required
-              />
+              <span className={labelCls}>Teléfono de la Empresa</span>
+              <input className={inputCls} value={form.telefono} onChange={(e) => set("telefono", e.target.value)} placeholder="+584141234567" required />
             </label>
             <label className="flex flex-col">
-              <span className={labelCls}>Plan de Suscripción</span>
-              <select className={inputCls} value={form.plan} onChange={(e) => set("plan", e.target.value)}>
-                {PLANES.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col">
-              <span className={labelCls}>Límite de Usuarios Permitidos</span>
-              <input
-                type="number"
-                step="1"
-                min="1"
-                className={inputCls}
-                value={form.limiteUsuarios}
-                onChange={(e) => set("limiteUsuarios", e.target.value)}
-                placeholder="10"
-                required
-              />
+              <span className={labelCls}>Dirección</span>
+              <input className={inputCls} value={form.direccion} onChange={(e) => set("direccion", e.target.value)} placeholder="Av. Principal, Barinas" />
             </label>
             <label className="flex flex-col">
               <span className={labelCls}>Tipo de Negocio</span>
-              <select
-                className={inputCls}
-                value={form.tipoNegocio}
-                onChange={(e) => set("tipoNegocio", e.target.value)}
-                required
-              >
+              <select className={inputCls} value={form.tipoNegocio} onChange={(e) => set("tipoNegocio", e.target.value)} required>
                 {TIPOS_NEGOCIO.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
@@ -409,98 +393,88 @@ export default function ModuloEmpresas() {
             </label>
             <label className="flex flex-col">
               <span className={labelCls}>Nombre Reducido</span>
-              <input
-                className={inputCls}
-                value={form.nombreCorto}
-                onChange={(e) => set("nombreCorto", e.target.value)}
-                placeholder="Ej: AgroBarinas"
-              />
+              <input className={inputCls} value={form.nombreCorto} onChange={(e) => set("nombreCorto", e.target.value)} placeholder="Ej: AgroBarinas" />
             </label>
             <label className="flex flex-col">
               <span className={labelCls}>URL del Logo</span>
-              <input
-                className={inputCls}
-                value={form.logoUrl}
-                onChange={(e) => set("logoUrl", e.target.value)}
-                placeholder="https://.../logo.png"
-              />
+              <input className={inputCls} value={form.logoUrl} onChange={(e) => set("logoUrl", e.target.value)} placeholder="https://.../logo.png" />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Sitio Web</span>
+              <input className={inputCls} value={form.sitioWeb} onChange={(e) => set("sitioWeb", e.target.value)} placeholder="https://miempresa.com" />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Instagram</span>
+              <input className={inputCls} value={form.instagram} onChange={(e) => set("instagram", e.target.value)} placeholder="@miempresa" />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Facebook</span>
+              <input className={inputCls} value={form.facebook} onChange={(e) => set("facebook", e.target.value)} placeholder="facebook.com/miempresa" />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>WhatsApp</span>
+              <input className={inputCls} value={form.whatsapp} onChange={(e) => set("whatsapp", e.target.value)} placeholder="+584141234567" />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>TikTok</span>
+              <input className={inputCls} value={form.tiktok} onChange={(e) => set("tiktok", e.target.value)} placeholder="@miempresa" />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>X (Twitter)</span>
+              <input className={inputCls} value={form.x} onChange={(e) => set("x", e.target.value)} placeholder="@miempresa" />
             </label>
             <div className="flex items-center gap-4">
               <label className="flex flex-1 flex-col">
                 <span className={labelCls}>Color Primario</span>
-                <input
-                  type="color"
-                  className="mt-1 h-10 w-full cursor-pointer rounded-xl border border-slate-200"
-                  value={form.colorPrimario}
-                  onChange={(e) => set("colorPrimario", e.target.value)}
-                />
+                <input type="color" className="mt-1 h-10 w-full cursor-pointer rounded-xl border border-slate-200" value={form.colorPrimario} onChange={(e) => set("colorPrimario", e.target.value)} />
               </label>
               <label className="flex flex-1 flex-col">
                 <span className={labelCls}>Color Secundario</span>
-                <input
-                  type="color"
-                  className="mt-1 h-10 w-full cursor-pointer rounded-xl border border-slate-200"
-                  value={form.colorSecundario}
-                  onChange={(e) => set("colorSecundario", e.target.value)}
-                />
+                <input type="color" className="mt-1 h-10 w-full cursor-pointer rounded-xl border border-slate-200" value={form.colorSecundario} onChange={(e) => set("colorSecundario", e.target.value)} />
               </label>
             </div>
           </div>
         </section>
 
-        {/* --- Credenciales Maestras --- */}
+        {/* --- Datos del Dueño --- */}
         <section>
-          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Creación de Credenciales Maestras</h3>
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Datos del Dueño</h3>
           <div className="mt-3 grid grid-cols-2 gap-4">
             <label className="flex flex-col">
-              <span className={labelCls}>Nombre Completo del Administrador</span>
-              <input
-                className={inputCls}
-                value={form.nombreAdmin}
-                onChange={(e) => set("nombreAdmin", e.target.value)}
-                placeholder="Ej: Carlos Gerente"
-                required
-              />
+              <span className={labelCls}>Nombre Completo</span>
+              <input className={inputCls} value={form.nombreAdmin} onChange={(e) => set("nombreAdmin", e.target.value)} placeholder="Ej: Carlos Gerente" required />
             </label>
             <label className="flex flex-col">
-              <span className={labelCls}>Correo del Administrador</span>
-              <input
-                type="email"
-                className={inputCls}
-                value={form.emailAdmin}
-                onChange={(e) => set("emailAdmin", e.target.value)}
-                placeholder="admin@empresa.com"
-                required
-              />
+              <span className={labelCls}>Correo (su acceso al sistema)</span>
+              <input type="email" className={inputCls} value={form.emailAdmin} onChange={(e) => set("emailAdmin", e.target.value)} placeholder="dueno@empresa.com" required />
+              <p className="mt-1 text-xs text-slate-400">El dueño inicia sesión con este correo.</p>
             </label>
             <label className="flex flex-col">
-              <span className={labelCls}>Usuario Administrador Inicial</span>
-              <input
-                className={inputCls}
-                value={form.usuarioAdmin}
-                onChange={(e) => set("usuarioAdmin", e.target.value)}
-                placeholder="ej. admin_abasto"
-                required
-              />
+              <span className={labelCls}>Teléfono del Dueño</span>
+              <input className={inputCls} value={form.telefonoAdmin} onChange={(e) => set("telefonoAdmin", e.target.value)} placeholder="+584141234567" />
             </label>
             <label className="flex flex-col">
-              <span className={labelCls}>Clave Primaria Temporal</span>
-              <input
-                type="password"
-                className={inputCls}
-                value={form.claveTemporal}
-                onChange={(e) => set("claveTemporal", e.target.value)}
-                required
-              />
+              <span className={labelCls}>Clave Temporal</span>
+              <input type="password" className={inputCls} value={form.claveTemporal} onChange={(e) => set("claveTemporal", e.target.value)} required />
               <p className="mt-1 text-xs text-slate-400">El cliente deberá cambiar esta clave obligatoriamente en su primer inicio de sesión.</p>
             </label>
           </div>
         </section>
 
-        {/* --- Temporizador de Suscripción --- */}
+        {/* --- Plan y Vigencia --- */}
         <section>
-          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Cronómetro de Vencimiento</h3>
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Plan y Vigencia</h3>
           <div className="mt-3 grid grid-cols-2 gap-4">
+            <label className="flex flex-col col-span-2">
+              <span className={labelCls}>Plan de Suscripción</span>
+              <select className={inputCls} value={form.planId} onChange={(e) => seleccionarPlan(e.target.value)} required>
+                <option value="" disabled>Selecciona un plan...</option>
+                {catalogoPlanes.map((p) => (
+                  <option key={p.id} value={p.id}>{p.nombre} — ${p.precio_mensual}/mes</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-400">Al elegir un plan se precargan sus módulos y agentes abajo — puedes ajustarlos después.</p>
+            </label>
             <label className="flex flex-col">
               <span className={labelCls}>Fecha de Inicio de Suscripción</span>
               <input type="date" className={inputCls} value={form.fechaInicio} onChange={(e) => set("fechaInicio", e.target.value)} required />
