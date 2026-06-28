@@ -8,6 +8,7 @@ from app.models.producto import Producto
 from app.models.lote import Lote
 from app.models.cliente import Cliente
 from app.models.ticket import Ticket
+from app.models.turno_caja import TurnoCaja
 from app.models.visita import VisitaCliente, EncuestaMarketing
 from app.models.orden_venta import OrdenVenta, OrdenVentaItem
 from app.models.ruta import RutaVendedor, RutaActividad

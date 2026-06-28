@@ -23,6 +23,7 @@ from app.models.tesoreria import CuentaTesoreria, MovimientoTesoreria
 from app.models.cartera import CuentaPorCobrar, CuentaPorPagar, PagoCxc
 from app.models.cobranza import GestionCobranza
 from app.models.desposte import Desposte, DesposteItem, DesposteSolicitud
+from app.models.turno_caja import TurnoCaja
 from app.models.recepcion import RecepcionMercancia, RecepcionMercanciaItem
 from app.models.auditoria import AuditoriaInventario, AuditoriaInventarioItem
 from app.models.visita import VisitaCliente, EncuestaMarketing, EncuestaInventarioItem
