@@ -3,7 +3,7 @@
 ## Contexto
 
 3Q Solutions es la empresa que vende el producto SaaS de este repo (internamente
-llamado **3Q Nexus ERP**: CRM + ERP + agentes de IA para minimarkets/negocios).
+llamado **3Q Nexus**: CRM + ERP + agentes de IA para minimarkets/negocios).
 Hoy existen dos artefactos relacionados que NO se tocan en este trabajo:
 
 - `frontend/` — la app real del SaaS (React 19 + Vite + TS + Tailwind, sin `motion`).
