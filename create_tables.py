@@ -7,6 +7,7 @@ from app.models.base import Base
 # Si no se importan, SQLAlchemy no sabrá que existen al momento de ejecutar create_all.
 from app.models.empresa import Empresa
 from app.models.usuario import Usuario
+from app.models.plan import Plan
 from app.models.cliente import Cliente
 from app.models.producto import Producto
 from app.models.ticket import Ticket

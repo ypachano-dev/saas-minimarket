@@ -11,6 +11,7 @@ class Usuario(Base):
     
     nombre: Mapped[str] = mapped_column(String(100), nullable=False)
     email: Mapped[str] = mapped_column(String(100), nullable=False)
+    telefono: Mapped[str | None] = mapped_column(String(20), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     
     # Roles operativos para el Minimarket, Retail y Gestión Veterinaria

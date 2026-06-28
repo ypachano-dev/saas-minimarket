@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import String, Text, DateTime, Boolean, Enum as SAEnum, func
+from sqlalchemy import String, Text, DateTime, Boolean, Enum as SAEnum, func, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 from app.core.negocio_config import TipoNegocio
@@ -15,6 +15,22 @@ class Empresa(Base):
     telefono: Mapped[str | None] = mapped_column(String(20), nullable=True)
     direccion: Mapped[str | None] = mapped_column(Text, nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Plan de suscripción asignado (catálogo editable en la tabla 'plan')
+    plan_id: Mapped[int | None] = mapped_column(ForeignKey("plan.id"), nullable=True)
+
+    # Presencia digital del cliente, mostrada en su propio sitio/landing si aplica
+    sitio_web: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    instagram: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    facebook: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    tiktok: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    x: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Ajuste fino de módulos por empresa, por encima de los módulos base de
+    # tipo_negocio. Dict {"clave_modulo": bool}; una clave ausente significa
+    # "usar lo que diga tipo_negocio". Ver calcular_modulos_habilitados en app/main.py.
+    modulos_override: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Personalización visual de la interfaz por cliente
     color_primario: Mapped[str] = mapped_column(String(7), default="#00ebc7")
