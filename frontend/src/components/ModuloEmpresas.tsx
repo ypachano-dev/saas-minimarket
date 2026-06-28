@@ -3,6 +3,7 @@ import apiClient from "../api/client";
 import { useSuscripcion, addDias } from "../state/suscripcion";
 import { APP_NAME, FIRMA_PROVEEDOR } from "../config/brand";
 import MatrizModulosAgentes, { MODULOS_ERP, type AgenteIAKey } from "./empresas/MatrizModulosAgentes";
+import CatalogoPlanes from "./empresas/CatalogoPlanes";
 
 const PLANES = ["Básico", "Profesional", "Premium", "Custom"];
 
@@ -333,6 +334,8 @@ export default function ModuloEmpresas() {
       </header>
 
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+
+      <CatalogoPlanes />
 
       <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-100/80 bg-white p-8 shadow-sm hover:shadow-md transition-all duration-300 space-y-8">
         {/* --- Alta de Empresa --- */}
