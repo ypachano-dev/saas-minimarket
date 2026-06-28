@@ -2,6 +2,7 @@ import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import Features from './components/Features'
 import AgentesIA from './components/AgentesIA'
+import Planes from './components/Planes'
 
 function App() {
   return (
@@ -11,6 +12,7 @@ function App() {
         <Hero />
         <Features />
         <AgentesIA />
+        <Planes />
       </main>
     </div>
   )
