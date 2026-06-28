@@ -15,7 +15,7 @@ export interface ModuloDef {
 export const MODULOS: ModuloDef[] = [
   { key: "dashboard", icon: "📊", label: "Dashboard Maestro" },
   { key: "ingreso", icon: "📥", label: "Ingreso de Datos", pendientes: ["Clientes", "Productos", "Empleados", "Usuarios", "Vehículos Delivery", "Proveedores"] },
-  { key: "visitas", icon: "🚗", label: "Visita Clientes (RTC)", pendientes: ["Historial de cliente", "Toma de presupuesto", "Encuesta de marketing", "GPS y foto de fachada"] },
+  { key: "visitas", icon: "🚗", label: "Visita Clientes", pendientes: ["Historial de cliente", "Toma de presupuesto", "Encuesta de marketing", "GPS y foto de fachada"] },
   { key: "rutas", icon: "🗺️", label: "Agenda y Viáticos", pendientes: ["Planificación semanal", "Solicitud de viáticos", "Aprobación de gerente", "Seguimiento GPS en tiempo real"] },
   { key: "balanza", icon: "⚖️", label: "Balanza Digital", pendientes: ["Pesaje carnicería", "Pesaje verdulería", "Pesaje charcutería"] },
   { key: "pos", icon: "🛒", label: "Caja / POS", pendientes: ["Punto de venta", "Caja chica", "Lector de código de barras"] },
@@ -64,7 +64,7 @@ export default function Sidebar({
     if (m.key === "configuracion") return rol === "admin" || rol === "propietario";
     if (rol === "repartidor") return m.key === "delivery";
     
-    // Si el usuario es un vendedor RTC, solo ve Dashboard, Visita Clientes, Rutas y Ficha Catálogo
+    // Si el usuario es un vendedor, solo ve Dashboard, Visita Clientes, Rutas y Ficha Catálogo
     if (rol === "vendedor") {
       const allowedVendedor = ["dashboard", "visitas", "rutas", "ficha"];
       if (!allowedVendedor.includes(m.key)) return false;
