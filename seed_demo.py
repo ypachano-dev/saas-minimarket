@@ -34,7 +34,7 @@ emp2 = db.query(Empresa).filter(Empresa.id == 2).first()
 if not emp2:
     emp2 = Empresa(
         id=2, rif="J-98765432-1", nombre_comercial="AgroFerretería El Campo",
-        tipo_negocio="agroferreteria", color_primario="#10b981", color_secundario="#064e3b",
+        tipo_negocio="ferreagropecuaria", color_primario="#10b981", color_secundario="#064e3b",
         status="activo"
     )
     db.add(emp2)
