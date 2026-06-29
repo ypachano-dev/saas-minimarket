@@ -510,6 +510,196 @@ export default function ModuloEmpresas() {
         </div>
       )}
 
+      {/* --- Lista de Clientes Registrados (primero) --- */}
+      <section className="rounded-2xl border border-slate-100/80 bg-white shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden space-y-4 p-6">
+        <h3 className="text-lg font-black tracking-tight text-slate-900">Listado de Empresas Clientes</h3>
+        
+        {cargandoEmpresas ? (
+          <p className="text-sm text-slate-400 animate-pulse py-4 text-center">Cargando listado de empresas...</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50 text-left">
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Razón Social</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">RIF</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Plan</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Dueño / Admin</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Vencimiento</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Estado</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {empresas.map((emp) => {
+                  const planName = catalogoPlanes.find(p => p.id === emp.plan_id)?.nombre || "Sin Plan";
+                  const esEmpresaPropia = emp.id === suscripcion.empresaId;
+                  const fechaVencimiento = esEmpresaPropia ? suscripcion.fechaVencimiento : (emp.fecha_vencimiento || "");
+                  const estado = esEmpresaPropia ? (suscripcion.estado === "Activo" ? "activo" : "suspendido") : emp.status;
+
+                  return (
+                    <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-slate-700">
+                        <div className="flex items-center gap-3">
+                          {emp.logo_url && <img src={emp.logo_url} alt="Logo" className="h-7 w-7 rounded-lg object-contain bg-slate-50 border border-slate-100" />}
+                          <div>
+                            <div>{emp.nombre_comercial}</div>
+                            {esEmpresaPropia && suscripcion.reportePendiente && (
+                              <div className="mt-0.5 inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-black text-blue-700">
+                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
+                                PAGO PENDIENTE POR REVISAR
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-500">{emp.rif}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600 font-semibold">{planName}</td>
+                      <td className="px-4 py-3 text-xs">
+                        <div className="text-slate-700 font-semibold">{emp.owner_nombre || "Sin Dueño"}</div>
+                        <div className="text-slate-400 font-mono">{emp.owner_email}</div>
+                      </td>
+                      <td className="px-4 py-3"><BadgeVencimiento fecha={fechaVencimiento} /></td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider ${
+                            estado === "activo" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+                          }`}
+                        >
+                          {estado === "activo" ? "Activo" : "Suspendido"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => iniciarEdicion(emp)}
+                            title="Editar Datos"
+                            className="rounded-full bg-slate-100 p-2 text-slate-600 transition-colors hover:bg-blue-50 hover:text-blue-700"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => abrirHistorial(emp.id)}
+                            title="Historial de Pagos"
+                            className="rounded-full bg-slate-100 p-2 text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-700"
+                          >
+                            🧾
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleEstado(emp)}
+                            className={`rounded-full px-2.5 py-1 text-xs font-bold text-white transition-colors ${
+                              estado === "activo" ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700"
+                            }`}
+                          >
+                            {estado === "activo" ? "Suspender" : "Activar"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => eliminarEmpresa(emp.id)}
+                            disabled={emp.id === 1}
+                            title="Eliminar Empresa"
+                            className="rounded-full bg-slate-100 p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors disabled:opacity-30 disabled:hover:bg-slate-100"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* --- PANEL DE GESTIÓN DE PAGOS, COBROS Y PROMOCIONES (Punto 5) --- */}
+      <section className="rounded-2xl border border-slate-100/80 bg-white shadow-sm hover:shadow-md transition-all duration-300 p-6 space-y-6">
+        <div>
+          <h3 className="text-lg font-black tracking-tight text-slate-900">Panel de Control de Cobros y Promociones</h3>
+          <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mt-1">Gestión del contacto, cobranzas y ofertas a clientes activos</p>
+        </div>
+
+        {/* Datos Bancarios Referenciales para Enviar */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50/30 border border-blue-100 p-4 rounded-2xl">
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🏦 Cuentas de Cobro Nacional (Pago Móvil)</h4>
+            <p className="text-xs text-slate-600"><span className="font-semibold">Banco:</span> Banesco (0134)</p>
+            <p className="text-xs text-slate-600"><span className="font-semibold">RIF:</span> J-31294829-0</p>
+            <p className="text-xs text-slate-600"><span className="font-semibold">Teléfono:</span> 0414-1234567</p>
+          </div>
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🇺🇸 Cuentas de Cobro Internacional (Zelle)</h4>
+            <p className="text-xs text-slate-600"><span className="font-semibold">Correo Zelle:</span> pagos@3qsolutions.com</p>
+            <p className="text-xs text-slate-600"><span className="font-semibold">Titular:</span> 3Q Solutions Corp.</p>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-slate-50 text-left">
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Cliente</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Plan / Costo</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Vencimiento</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Acciones de Cobro</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {empresas.map((emp) => {
+                const plan = catalogoPlanes.find(p => p.id === emp.plan_id);
+                const planName = plan?.nombre || "Sin Plan";
+                const planPrice = plan?.precio_mensual || 0;
+                
+                return (
+                  <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-slate-700">{emp.nombre_comercial}</div>
+                      <div className="text-slate-400 text-xs font-mono">{emp.telefono || emp.owner_telefono}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-slate-700">{planName}</div>
+                      <div className="text-xs text-slate-400">${planPrice}/mes</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <BadgeVencimiento fecha={emp.fecha_vencimiento || ""} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => enviarWhatsApp(emp, "cobro")}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition-colors border border-emerald-100"
+                        >
+                          💬 Recordar Pago
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => enviarWhatsApp(emp, "promo")}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-100 transition-colors border border-purple-100"
+                        >
+                          🚀 Enviar Oferta
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => abrirHistorial(emp.id)}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200 transition-colors"
+                        >
+                          💵 Registrar Pago
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {/* Catálogo Compacto */}
       <CatalogoPlanes />
 
@@ -701,196 +891,6 @@ export default function ModuloEmpresas() {
           </button>
         </div>
       </form>
-
-      {/* --- Lista de Clientes Registrados --- */}
-      <section className="rounded-2xl border border-slate-100/80 bg-white shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden space-y-4 p-6">
-        <h3 className="text-lg font-black tracking-tight text-slate-900">Listado de Empresas Clientes</h3>
-        
-        {cargandoEmpresas ? (
-          <p className="text-sm text-slate-400 animate-pulse py-4 text-center">Cargando listado de empresas...</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50 text-left">
-                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Razón Social</th>
-                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">RIF</th>
-                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Plan</th>
-                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Dueño / Admin</th>
-                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Vencimiento</th>
-                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Estado</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {empresas.map((emp) => {
-                  const planName = catalogoPlanes.find(p => p.id === emp.plan_id)?.nombre || "Sin Plan";
-                  const esEmpresaPropia = emp.id === suscripcion.empresaId;
-                  const fechaVencimiento = esEmpresaPropia ? suscripcion.fechaVencimiento : (emp.fecha_vencimiento || "");
-                  const estado = esEmpresaPropia ? (suscripcion.estado === "Activo" ? "activo" : "suspendido") : emp.status;
-
-                  return (
-                    <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-4 py-3 font-medium text-slate-700">
-                        <div className="flex items-center gap-3">
-                          {emp.logo_url && <img src={emp.logo_url} alt="Logo" className="h-7 w-7 rounded-lg object-contain bg-slate-50 border border-slate-100" />}
-                          <div>
-                            <div>{emp.nombre_comercial}</div>
-                            {esEmpresaPropia && suscripcion.reportePendiente && (
-                              <div className="mt-0.5 inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-black text-blue-700">
-                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
-                                PAGO PENDIENTE POR REVISAR
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-slate-500">{emp.rif}</td>
-                      <td className="px-4 py-3 text-xs text-slate-600 font-semibold">{planName}</td>
-                      <td className="px-4 py-3 text-xs">
-                        <div className="text-slate-700 font-semibold">{emp.owner_nombre || "Sin Dueño"}</div>
-                        <div className="text-slate-400 font-mono">{emp.owner_email}</div>
-                      </td>
-                      <td className="px-4 py-3"><BadgeVencimiento fecha={fechaVencimiento} /></td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider ${
-                            estado === "activo" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
-                          }`}
-                        >
-                          {estado === "activo" ? "Activo" : "Suspendido"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => iniciarEdicion(emp)}
-                            title="Editar Datos"
-                            className="rounded-full bg-slate-100 p-2 text-slate-600 transition-colors hover:bg-blue-50 hover:text-blue-700"
-                          >
-                            ✏️
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => abrirHistorial(emp.id)}
-                            title="Historial de Pagos"
-                            className="rounded-full bg-slate-100 p-2 text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-700"
-                          >
-                            🧾
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => toggleEstado(emp)}
-                            className={`rounded-full px-2.5 py-1 text-xs font-bold text-white transition-colors ${
-                              estado === "activo" ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700"
-                            }`}
-                          >
-                            {estado === "activo" ? "Suspender" : "Activar"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => eliminarEmpresa(emp.id)}
-                            disabled={emp.id === 1}
-                            title="Eliminar Empresa"
-                            className="rounded-full bg-slate-100 p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors disabled:opacity-30 disabled:hover:bg-slate-100"
-                          >
-                            🗑️
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* --- PANEL DE GESTIÓN DE PAGOS, COBROS Y PROMOCIONES (Punto 5) --- */}
-      <section className="rounded-2xl border border-slate-100/80 bg-white shadow-sm hover:shadow-md transition-all duration-300 p-6 space-y-6">
-        <div>
-          <h3 className="text-lg font-black tracking-tight text-slate-900">Panel de Control de Cobros y Promociones</h3>
-          <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mt-1">Gestión del contacto, cobranzas y ofertas a clientes activos</p>
-        </div>
-
-        {/* Datos Bancarios Referenciales para Enviar */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50/30 border border-blue-100 p-4 rounded-2xl">
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🏦 Cuentas de Cobro Nacional (Pago Móvil)</h4>
-            <p className="text-xs text-slate-600"><span className="font-semibold">Banco:</span> Banesco (0134)</p>
-            <p className="text-xs text-slate-600"><span className="font-semibold">RIF:</span> J-31294829-0</p>
-            <p className="text-xs text-slate-600"><span className="font-semibold">Teléfono:</span> 0414-1234567</p>
-          </div>
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🇺🇸 Cuentas de Cobro Internacional (Zelle)</h4>
-            <p className="text-xs text-slate-600"><span className="font-semibold">Correo Zelle:</span> pagos@3qsolutions.com</p>
-            <p className="text-xs text-slate-600"><span className="font-semibold">Titular:</span> 3Q Solutions Corp.</p>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 bg-slate-50 text-left">
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Cliente</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Plan / Costo</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Vencimiento</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Acciones de Cobro</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {empresas.map((emp) => {
-                const plan = catalogoPlanes.find(p => p.id === emp.plan_id);
-                const planName = plan?.nombre || "Sin Plan";
-                const planPrice = plan?.precio_mensual || 0;
-                
-                return (
-                  <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="font-bold text-slate-700">{emp.nombre_comercial}</div>
-                      <div className="text-slate-400 text-xs font-mono">{emp.telefono || emp.owner_telefono}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="font-semibold text-slate-700">{planName}</div>
-                      <div className="text-xs text-slate-400">${planPrice}/mes</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <BadgeVencimiento fecha={emp.fecha_vencimiento || ""} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => enviarWhatsApp(emp, "cobro")}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition-colors border border-emerald-100"
-                        >
-                          💬 Recordar Pago
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => enviarWhatsApp(emp, "promo")}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-100 transition-colors border border-purple-100"
-                        >
-                          🚀 Enviar Oferta
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => abrirHistorial(emp.id)}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200 transition-colors"
-                        >
-                          💵 Registrar Pago
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
 
       {/* --- Modal Historial de Pagos y Registrar Cobros --- */}
       {empresaModal && (
