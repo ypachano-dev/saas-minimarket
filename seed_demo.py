@@ -3,6 +3,8 @@ from decimal import Decimal
 from app.db.session import SessionLocal
 from app.models.empresa import Empresa
 from app.models.usuario import Usuario
+from app.models.plan import Plan
+from app.models.saas_pago import SaasPago
 from app.models.tasa import TasaCambio
 from app.models.producto import Producto
 from app.models.lote import Lote
