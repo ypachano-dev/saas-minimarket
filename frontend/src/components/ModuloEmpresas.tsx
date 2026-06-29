@@ -12,30 +12,51 @@ const TIPOS_NEGOCIO = [
   { value: "ferreagropecuaria", label: "FerreAgropecuaria" },
 ] as const;
 
-type EstadoEmpresa = "Activo" | "Suspendido";
-
-interface Pago {
+interface SaasPago {
   id: number;
-  fecha: string;
+  empresa_id: number;
+  empresa_nombre: string;
   monto: number;
+  metodo: string;
   referencia: string;
-  recibo: string;
+  comprobante: string | null;
+  fecha: string;
+  created_at: string;
 }
 
-interface Empresa {
+interface EmpresaSaaS {
   id: number;
   rif: string;
-  razonSocial: string;
-  telefono: string;
-  plan: string;
-  limiteUsuarios: number;
-  usuariosCreados: number;
-  estado: EstadoEmpresa;
-  modulos: Record<string, boolean>;
-  usuarioAdmin: string;
-  fechaInicio: string;
-  fechaVencimiento: string;
-  pagos: Pago[];
+  nombre_comercial: string;
+  nombre_corto: string | null;
+  telefono: string | null;
+  direccion: string | null;
+  tipo_negocio: string;
+  plan_id: number | null;
+  sitio_web: string | null;
+  instagram: string | null;
+  facebook: string | null;
+  whatsapp: string | null;
+  tiktok: string | null;
+  x: string | null;
+  modulos_override: Record<string, boolean> | null;
+  color_primario: string;
+  color_secundario: string;
+  logo_url: string | null;
+  status: string;
+  fecha_inicio: string | null;
+  fecha_vencimiento: string | null;
+  created_at: string;
+  
+  owner_id: number | null;
+  owner_nombre: string | null;
+  owner_email: string | null;
+  owner_telefono: string | null;
+  
+  // Compatibilidad
+  agente_vale_activo?: boolean;
+  agente_yhorge_activo?: boolean;
+  agente_alo_activo?: boolean;
 }
 
 // Fecha actual en formato YYYY-MM-DD para inputs type="date"
@@ -43,44 +64,7 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-const EMPRESAS_INICIALES: Empresa[] = [
-  {
-    id: 1,
-    rif: "J-12345678-0",
-    razonSocial: "MiniMarket Barinas C.A.",
-    telefono: "0273-1234567",
-    plan: "Profesional",
-    limiteUsuarios: 10,
-    usuariosCreados: 6,
-    estado: "Activo",
-    modulos: { dashboard: true, ingreso: true, pos: true, pedidos: true, delivery: true, crm: false, estadisticas: false, almacen: true, tesoreria: true },
-    usuarioAdmin: "admin_barinas",
-    fechaInicio: "2026-05-13",
-    fechaVencimiento: "2026-06-17",
-    pagos: [
-      { id: 2, fecha: "2026-06-01", monto: 49.99, referencia: "PM-88291", recibo: "recibo_junio.pdf" },
-      { id: 1, fecha: "2026-05-01", monto: 49.99, referencia: "PM-77104", recibo: "recibo_mayo.jpg" },
-    ],
-  },
-  {
-    id: 2,
-    rif: "J-87654321-9",
-    razonSocial: "Bodegón El Sabor",
-    telefono: "0414-9876543",
-    plan: "Básico",
-    limiteUsuarios: 3,
-    usuariosCreados: 3,
-    estado: "Suspendido",
-    modulos: { dashboard: true, ingreso: true, pos: true, pedidos: false, delivery: false, crm: false, estadisticas: false, almacen: false, tesoreria: false },
-    usuarioAdmin: "admin_sabor",
-    fechaInicio: "2026-04-01",
-    fechaVencimiento: "2026-06-01",
-    pagos: [],
-  },
-];
-
 const initialForm = {
-  // Datos de la Empresa
   rif: "",
   razonSocial: "",
   telefono: "",
@@ -96,11 +80,9 @@ const initialForm = {
   x: "",
   colorPrimario: "#00ebc7",
   colorSecundario: "#111936",
-  // Plan y vigencia
   planId: "",
   fechaInicio: today(),
   fechaVencimiento: "",
-  // Datos del Dueño (también su identidad de acceso)
   nombreAdmin: "",
   emailAdmin: "",
   telefonoAdmin: "",
@@ -111,9 +93,9 @@ const initialModulos: Record<string, boolean> = Object.fromEntries(MODULOS_ERP.m
 
 const initialAgentesIA: Record<AgenteIAKey, boolean> = { vale: true, yhorge: true, alo: true };
 
-const initialPagoForm = { fecha: today(), monto: "", referencia: "", recibo: "" };
+const initialPagoForm = { fecha: today(), monto: "", referencia: "", recibo: "", metodo: "Pago Móvil" };
 
-const inputCls = "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+const inputCls = "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50/50";
 const labelCls = "text-xs font-semibold uppercase tracking-wider text-slate-400";
 
 // Formatea el RIF al estilo criollo: J-12345678-0
@@ -148,20 +130,49 @@ function BadgeVencimiento({ fecha }: { fecha: string }) {
 }
 
 export default function ModuloEmpresas() {
-  const [empresas, setEmpresas] = useState<Empresa[]>(EMPRESAS_INICIALES);
+  const [empresas, setEmpresas] = useState<EmpresaSaaS[]>([]);
+  const [cargandoEmpresas, setCargandoEmpresas] = useState(true);
+  
+  const [pagosGlobales, setPagosGlobales] = useState<SaasPago[]>([]);
+
   const [form, setForm] = useState(initialForm);
   const [modulos, setModulos] = useState<Record<string, boolean>>(initialModulos);
   const [agentesIA, setAgentesIA] = useState<Record<AgenteIAKey, boolean>>(initialAgentesIA);
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [subiendoLogo, setSubiendoLogo] = useState(false);
+  const [editMode, setEditMode] = useState<number | null>(null);
+
   const [modalEmpresa, setModalEmpresa] = useState<number | null>(null);
   const [pagoForm, setPagoForm] = useState(initialPagoForm);
   const [pagoError, setPagoError] = useState("");
   const [suscripcion, actualizarSuscripcion] = useSuscripcion();
   const [catalogoPlanes, setCatalogoPlanes] = useState<PlanCatalogo[]>([]);
 
+  async function cargarEmpresas() {
+    setCargandoEmpresas(true);
+    try {
+      const { data } = await apiClient.get<EmpresaSaaS[]>("/api/v1/saas/empresas");
+      setEmpresas(data);
+    } catch (err) {
+      console.error("Error al cargar empresas:", err);
+    }
+    setCargandoEmpresas(false);
+  }
+
+  async function cargarPagos() {
+    try {
+      const { data } = await apiClient.get<SaasPago[]>("/api/v1/saas/pagos");
+      setPagosGlobales(data);
+    } catch (err) {
+      console.error("Error al cargar pagos:", err);
+    }
+  }
+
   useEffect(() => {
     apiClient.get<PlanCatalogo[]>("/api/v1/planes").then(({ data }) => setCatalogoPlanes(data));
+    cargarEmpresas();
+    cargarPagos();
   }, []);
 
   function set<K extends keyof typeof initialForm>(key: K, value: string) {
@@ -174,6 +185,12 @@ export default function ModuloEmpresas() {
     if (!plan) return;
     setModulos(plan.modulos);
     setAgentesIA({ vale: plan.agente_vale_incluido, yhorge: plan.agente_yhorge_incluido, alo: plan.agente_alo_incluido });
+    
+    // Auto-calculate fechaVencimiento to +30 days from fechaInicio
+    if (form.fechaInicio) {
+      const vence = addDias(form.fechaInicio, 30);
+      set("fechaVencimiento", vence);
+    }
   }
 
   function toggleModulo(key: string) {
@@ -182,6 +199,92 @@ export default function ModuloEmpresas() {
 
   function toggleAgenteIA(key: AgenteIAKey) {
     setAgentesIA((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setSubiendoLogo(true);
+    setError("");
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const { data } = await apiClient.post<{ logo_url: string }>("/api/v1/auth/upload-logo", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      set("logoUrl", data.logo_url);
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Error al subir el logo.");
+    } finally {
+      setSubiendoLogo(false);
+    }
+  }
+
+  function iniciarEdicion(emp: EmpresaSaaS) {
+    setEditMode(emp.id);
+    setForm({
+      rif: emp.rif,
+      razonSocial: emp.nombre_comercial,
+      telefono: emp.telefono || "",
+      direccion: emp.direccion || "",
+      tipoNegocio: emp.tipo_negocio,
+      nombreCorto: emp.nombre_corto || "",
+      logoUrl: emp.logo_url || "",
+      sitioWeb: emp.sitio_web || "",
+      instagram: emp.instagram || "",
+      facebook: emp.facebook || "",
+      whatsapp: emp.whatsapp || "",
+      tiktok: emp.tiktok || "",
+      x: emp.x || "",
+      colorPrimario: emp.color_primario,
+      colorSecundario: emp.color_secundario,
+      planId: emp.plan_id ? String(emp.plan_id) : "",
+      fechaInicio: emp.fecha_inicio || today(),
+      fechaVencimiento: emp.fecha_vencimiento || "",
+      nombreAdmin: emp.owner_nombre || "",
+      emailAdmin: emp.owner_email || "",
+      telefonoAdmin: emp.owner_telefono || "",
+      claveTemporal: "", // Vacía, solo se actualiza si se escribe algo
+    });
+    setModulos(emp.modulos_override || initialModulos);
+    setAgentesIA({
+      vale: emp.agente_vale_activo ?? true,
+      yhorge: emp.agente_yhorge_activo ?? true,
+      alo: emp.agente_alo_activo ?? true,
+    });
+
+    const formElement = document.getElementById("empresa-form");
+    if (formElement) {
+      formElement.scrollIntoView({ behavior: "smooth" });
+    }
+  }
+
+  function cancelarEdicion() {
+    setEditMode(null);
+    setForm(initialForm);
+    setModulos(initialModulos);
+    setAgentesIA(initialAgentesIA);
+    setError("");
+  }
+
+  async function eliminarEmpresa(id: number) {
+    if (id === 1) {
+      alert("No se puede eliminar la empresa maestra principal.");
+      return;
+    }
+    if (!window.confirm("¿Estás seguro de que deseas eliminar esta empresa? Se borrarán todos los datos operativos y usuarios asociados permanentemente de la base de datos.")) {
+      return;
+    }
+    try {
+      await apiClient.delete(`/api/v1/saas/empresas/${id}`);
+      cargarEmpresas();
+      cargarPagos();
+      alert("Empresa eliminada exitosamente.");
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "No se pudo eliminar la empresa.");
+    }
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -193,8 +296,13 @@ export default function ModuloEmpresas() {
       return;
     }
 
-    if (!form.nombreAdmin.trim() || !form.emailAdmin.trim() || !form.claveTemporal.trim()) {
-      setError("Nombre del Dueño, Correo y Clave Temporal son obligatorios.");
+    if (!form.nombreAdmin.trim() || !form.emailAdmin.trim()) {
+      setError("Nombre del Dueño y Correo son obligatorios.");
+      return;
+    }
+
+    if (!editMode && !form.claveTemporal.trim()) {
+      setError("La Clave Temporal es obligatoria para nuevos registros.");
       return;
     }
 
@@ -205,104 +313,116 @@ export default function ModuloEmpresas() {
 
     setEnviando(true);
     try {
-      await apiClient.post("/api/v1/auth/registrar-saas", {
-        nombre_empresa: form.razonSocial.trim(),
-        rif_or_cedula: form.rif.trim(),
-        telefono: form.telefono.trim(),
-        direccion: form.direccion.trim() || null,
-        tipo_negocio: form.tipoNegocio,
-        plan_id: form.planId ? Number(form.planId) : null,
-        sitio_web: form.sitioWeb.trim() || null,
-        instagram: form.instagram.trim() || null,
-        facebook: form.facebook.trim() || null,
-        whatsapp: form.whatsapp.trim() || null,
-        tiktok: form.tiktok.trim() || null,
-        x: form.x.trim() || null,
-        modulos_override: modulos,
-        nombre_corto: form.nombreCorto.trim() || null,
-        logo_url: form.logoUrl.trim() || null,
-        color_primario: form.colorPrimario,
-        color_secundario: form.colorSecundario,
-        agente_vale_activo: agentesIA.vale,
-        agente_yhorge_activo: agentesIA.yhorge,
-        agente_alo_activo: agentesIA.alo,
-        nombre_admin: form.nombreAdmin.trim(),
-        email_admin: form.emailAdmin.trim(),
-        telefono_admin: form.telefonoAdmin.trim() || null,
-        password_admin: form.claveTemporal,
-      });
+      if (editMode) {
+        // Modo Edición
+        await apiClient.put(`/api/v1/saas/empresas/${editMode}`, {
+          nombre_comercial: form.razonSocial.trim(),
+          rif: form.rif.trim(),
+          telefono: form.telefono.trim(),
+          direccion: form.direccion.trim() || null,
+          tipo_negocio: form.tipoNegocio,
+          plan_id: form.planId ? Number(form.planId) : null,
+          sitio_web: form.sitioWeb.trim() || null,
+          instagram: form.instagram.trim() || null,
+          facebook: form.facebook.trim() || null,
+          whatsapp: form.whatsapp.trim() || null,
+          tiktok: form.tiktok.trim() || null,
+          x: form.x.trim() || null,
+          modulos_override: modulos,
+          nombre_corto: form.nombreCorto.trim() || null,
+          logo_url: form.logoUrl.trim() || null,
+          color_primario: form.colorPrimario,
+          color_secundario: form.colorSecundario,
+          status: empresas.find(em => em.id === editMode)?.status || "activo",
+          fecha_inicio: form.fechaInicio || null,
+          fecha_vencimiento: form.fechaVencimiento || null,
+          owner_nombre: form.nombreAdmin.trim(),
+          owner_email: form.emailAdmin.trim(),
+          owner_telefono: form.telefonoAdmin.trim() || null,
+          owner_password: form.claveTemporal.trim() || null,
+        });
+        alert("Empresa actualizada exitosamente en la base de datos.");
+      } else {
+        // Modo Creación
+        await apiClient.post("/api/v1/auth/registrar-saas", {
+          nombre_empresa: form.razonSocial.trim(),
+          rif_or_cedula: form.rif.trim(),
+          telefono: form.telefono.trim(),
+          direccion: form.direccion.trim() || null,
+          tipo_negocio: form.tipoNegocio,
+          plan_id: form.planId ? Number(form.planId) : null,
+          sitio_web: form.sitioWeb.trim() || null,
+          instagram: form.instagram.trim() || null,
+          facebook: form.facebook.trim() || null,
+          whatsapp: form.whatsapp.trim() || null,
+          tiktok: form.tiktok.trim() || null,
+          x: form.x.trim() || null,
+          modulos_override: modulos,
+          nombre_corto: form.nombreCorto.trim() || null,
+          logo_url: form.logoUrl.trim() || null,
+          color_primario: form.colorPrimario,
+          color_secundario: form.colorSecundario,
+          agente_vale_activo: agentesIA.vale,
+          agente_yhorge_activo: agentesIA.yhorge,
+          agente_alo_activo: agentesIA.alo,
+          nombre_admin: form.nombreAdmin.trim(),
+          email_admin: form.emailAdmin.trim(),
+          telefono_admin: form.telefonoAdmin.trim() || null,
+          password_admin: form.claveTemporal,
+          fecha_inicio: form.fechaInicio,
+          fecha_vencimiento: form.fechaVencimiento,
+        });
+        alert("Empresa creada exitosamente en la base de datos.");
+      }
+      
+      cargarEmpresas();
+      cancelarEdicion();
     } catch (err: any) {
-      setError(err?.response?.data?.detail || "No se pudo crear la empresa en el servidor.");
+      setError(err?.response?.data?.detail || "No se pudo procesar la solicitud en el servidor.");
+    } finally {
       setEnviando(false);
-      return;
     }
-    setEnviando(false);
-
-    const planSeleccionado = catalogoPlanes.find((p) => String(p.id) === form.planId);
-
-    const nuevaEmpresa: Empresa = {
-      id: empresas.length ? Math.max(...empresas.map((emp) => emp.id)) + 1 : 1,
-      rif: form.rif.trim(),
-      razonSocial: form.razonSocial.trim(),
-      telefono: form.telefono.trim(),
-      plan: planSeleccionado?.nombre ?? "Sin plan",
-      limiteUsuarios: planSeleccionado?.limite_usuarios ?? 0,
-      usuariosCreados: 1,
-      estado: "Activo",
-      modulos: { ...modulos },
-      usuarioAdmin: form.emailAdmin.trim(),
-      fechaInicio: form.fechaInicio,
-      fechaVencimiento: form.fechaVencimiento,
-      pagos: [],
-    };
-
-    setEmpresas((prev) => [nuevaEmpresa, ...prev]);
-    setForm(initialForm);
-    setModulos(initialModulos);
-    setAgentesIA(initialAgentesIA);
   }
 
-  function toggleEstado(id: number) {
-    if (id === suscripcion.empresaId) {
-      actualizarSuscripcion({ ...suscripcion, estado: suscripcion.estado === "Activo" ? "Suspendido" : "Activo" });
-      return;
+  async function toggleEstado(emp: EmpresaSaaS) {
+    const nuevoEstado = emp.status === "activo" ? "suspendido" : "activo";
+    
+    // Mantener la sincronía con localStorage para la empresa demo si es la propia
+    if (emp.id === suscripcion.empresaId) {
+      actualizarSuscripcion({ ...suscripcion, estado: nuevoEstado === "activo" ? "Activo" : "Suspendido" });
     }
-    setEmpresas((prev) =>
-      prev.map((emp) => (emp.id === id ? { ...emp, estado: emp.estado === "Activo" ? "Suspendido" : "Activo" } : emp))
-    );
-  }
 
-  // Aprueba el reporte de pago del cliente: lo agrega al historial y extiende el cronómetro 30 días
-  function aprobarSuscripcion() {
-    const reporte = suscripcion.reportePendiente;
-    if (!reporte) return;
-
-    setEmpresas((prev) =>
-      prev.map((emp) =>
-        emp.id === suscripcion.empresaId
-          ? {
-              ...emp,
-              pagos: [
-                {
-                  id: emp.pagos.length ? Math.max(...emp.pagos.map((p) => p.id)) + 1 : 1,
-                  fecha: reporte.fecha,
-                  monto: reporte.monto,
-                  referencia: reporte.referencia,
-                  recibo: reporte.recibo,
-                },
-                ...emp.pagos,
-              ],
-            }
-          : emp
-      )
-    );
-
-    actualizarSuscripcion({
-      ...suscripcion,
-      estado: "Activo",
-      fechaVencimiento: addDias(suscripcion.fechaVencimiento, 30),
-      reportePendiente: null,
-    });
+    try {
+      await apiClient.put(`/api/v1/saas/empresas/${emp.id}`, {
+        nombre_comercial: emp.nombre_comercial,
+        rif: emp.rif,
+        telefono: emp.telefono,
+        direccion: emp.direccion,
+        tipo_negocio: emp.tipo_negocio,
+        plan_id: emp.plan_id,
+        sitio_web: emp.sitio_web,
+        instagram: emp.instagram,
+        facebook: emp.facebook,
+        whatsapp: emp.whatsapp,
+        tiktok: emp.tiktok,
+        x: emp.x,
+        modulos_override: emp.modulos_override,
+        nombre_corto: emp.nombre_corto,
+        logo_url: emp.logo_url,
+        color_primario: emp.color_primario,
+        color_secundario: emp.color_secundario,
+        status: nuevoEstado,
+        fecha_inicio: emp.fecha_inicio,
+        fecha_vencimiento: emp.fecha_vencimiento,
+        owner_nombre: emp.owner_nombre || "",
+        owner_email: emp.owner_email || "",
+        owner_telefono: emp.owner_telefono || "",
+        owner_password: null,
+      });
+      cargarEmpresas();
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "No se pudo cambiar el estado de la empresa.");
+    }
   }
 
   function abrirHistorial(id: number) {
@@ -311,45 +431,71 @@ export default function ModuloEmpresas() {
     setPagoError("");
   }
 
-  function registrarPago(e: FormEvent) {
+  async function registrarPago(e: FormEvent) {
     e.preventDefault();
     if (modalEmpresa === null) return;
     setPagoError("");
 
     if (!pagoForm.fecha || !pagoForm.monto.trim() || !pagoForm.referencia.trim()) {
-      setPagoError("Fecha de Pago, Monto y Referencia de Transacción son obligatorios.");
+      setPagoError("Fecha de Pago, Monto y Referencia son obligatorios.");
       return;
     }
 
     const monto = Number(pagoForm.monto);
     if (Number.isNaN(monto) || monto <= 0) {
-      setPagoError("Monto debe ser un número mayor a 0.");
+      setPagoError("El monto debe ser un número mayor a 0.");
       return;
     }
 
-    setEmpresas((prev) =>
-      prev.map((emp) =>
-        emp.id === modalEmpresa
-          ? {
-              ...emp,
-              pagos: [
-                {
-                  id: emp.pagos.length ? Math.max(...emp.pagos.map((p) => p.id)) + 1 : 1,
-                  fecha: pagoForm.fecha,
-                  monto,
-                  referencia: pagoForm.referencia.trim(),
-                  recibo: pagoForm.recibo || "Sin adjunto",
-                },
-                ...emp.pagos,
-              ],
-            }
-          : emp
-      )
-    );
-    setPagoForm(initialPagoForm);
+    try {
+      await apiClient.post("/api/v1/saas/pagos", {
+        empresa_id: modalEmpresa,
+        monto,
+        metodo: pagoForm.metodo,
+        referencia: pagoForm.referencia.trim(),
+        comprobante: pagoForm.recibo || null,
+        fecha: pagoForm.fecha,
+        extender_dias: 30
+      });
+      
+      setPagoForm(initialPagoForm);
+      cargarPagos();
+      cargarEmpresas();
+      alert("Pago registrado con éxito. Suscripción extendida 30 días.");
+      
+      // Sincronizar localStorage si es el tenant demo
+      if (modalEmpresa === suscripcion.empresaId) {
+        actualizarSuscripcion({
+          ...suscripcion,
+          estado: "Activo",
+          fechaVencimiento: addDias(suscripcion.fechaVencimiento, 30),
+          reportePendiente: null
+        });
+      }
+    } catch (err: any) {
+      setPagoError(err?.response?.data?.detail || "No se pudo registrar el pago.");
+    }
+  }
+
+  function enviarWhatsApp(emp: EmpresaSaaS, tipo: "cobro" | "promo") {
+    const tlf = emp.owner_telefono || emp.telefono || "";
+    const cleanTlf = tlf.replace(/[^0-9]/g, "");
+    const planName = catalogoPlanes.find(p => p.id === emp.plan_id)?.nombre || "SaaS";
+    const planPrice = catalogoPlanes.find(p => p.id === emp.plan_id)?.precio_mensual || 0;
+
+    let mensaje = "";
+    if (tipo === "cobro") {
+      mensaje = `Estimado dueño de ${emp.nombre_comercial}, le saludamos de 3Q Solutions. Le recordamos amablemente que su suscripción al plan ${planName} vence el ${emp.fecha_vencimiento} (Monto: $${planPrice}/mes). Puede reportar su pago en su panel administrativo. ¡Gracias por su preferencia!`;
+    } else {
+      mensaje = `¡Súper Promoción para ${emp.nombre_comercial}! 🚀 Renueve hoy su plan anual de ${planName} y obtenga un 20% de descuento o reciba 2 meses adicionales totalmente gratis. Responda a este mensaje para reclamar su oferta.`;
+    }
+
+    const url = `https://wa.me/${cleanTlf.startsWith("58") ? cleanTlf : "58" + cleanTlf}?text=${encodeURIComponent(mensaje)}`;
+    window.open(url, "_blank");
   }
 
   const empresaModal = empresas.find((e) => e.id === modalEmpresa) ?? null;
+  const pagosFiltrados = pagosGlobales.filter(p => p.empresa_id === modalEmpresa);
 
   return (
     <div className="p-6 space-y-6">
@@ -358,22 +504,64 @@ export default function ModuloEmpresas() {
         <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Panel Maestro de Control de Suscripciones · {APP_NAME}</p>
       </header>
 
-      {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+      {error && (
+        <div className="rounded-2xl bg-rose-50 border border-rose-100 p-4 text-sm font-semibold text-rose-700 shadow-sm animate-shake">
+          ⚠️ {error}
+        </div>
+      )}
 
+      {/* Catálogo Compacto */}
       <CatalogoPlanes />
 
-      <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-100/80 bg-white p-8 shadow-sm hover:shadow-md transition-all duration-300 space-y-8">
-        {/* --- Datos de la Empresa --- */}
+      {/* Formulario Reorganizado */}
+      <form
+        id="empresa-form"
+        onSubmit={handleSubmit}
+        className="rounded-3xl border border-slate-100/80 bg-white p-8 shadow-sm hover:shadow-md transition-all duration-300 space-y-8 relative"
+      >
+        {editMode && (
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700 animate-pulse">Editando Empresa ID: {editMode}</span>
+            <button type="button" onClick={cancelarEdicion} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500 hover:bg-slate-200">Cancelar</button>
+          </div>
+        )}
+
+        {/* 1. Datos del Dueño (Primero) */}
         <section>
-          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Datos de la Empresa</h3>
-          <div className="mt-3 grid grid-cols-2 gap-4">
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-100 pb-2">1. Datos del Dueño</h3>
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label className="flex flex-col">
+              <span className={labelCls}>Nombre Completo</span>
+              <input className={inputCls} value={form.nombreAdmin} onChange={(e) => set("nombreAdmin", e.target.value)} placeholder="Carlos Gerente" required />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Correo (su acceso al sistema)</span>
+              <input type="email" className={inputCls} value={form.emailAdmin} onChange={(e) => set("emailAdmin", e.target.value)} placeholder="dueno@empresa.com" required />
+              <p className="mt-1 text-[10px] text-slate-400">El dueño inicia sesión con este correo.</p>
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Teléfono del Dueño</span>
+              <input className={inputCls} value={form.telefonoAdmin} onChange={(e) => set("telefonoAdmin", e.target.value)} placeholder="+584141234567" />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>{editMode ? "Nueva Clave (opcional)" : "Clave Temporal"}</span>
+              <input type="password" className={inputCls} value={form.claveTemporal} onChange={(e) => set("claveTemporal", e.target.value)} required={!editMode} placeholder={editMode ? "Dejar vacío para conservar actual" : ""} />
+              <p className="mt-1 text-[10px] text-slate-400">Cambio obligatorio en el primer inicio de sesión.</p>
+            </label>
+          </div>
+        </section>
+
+        {/* 2. Datos de la Empresa (Segundo) */}
+        <section>
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-100 pb-2">2. Datos de la Empresa</h3>
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
             <label className="flex flex-col">
               <span className={labelCls}>RIF</span>
               <input className={inputCls} value={form.rif} onChange={(e) => set("rif", formatRif(e.target.value))} placeholder="J-12345678-0" maxLength={12} required />
             </label>
             <label className="flex flex-col">
               <span className={labelCls}>Razón Social</span>
-              <input className={inputCls} value={form.razonSocial} onChange={(e) => set("razonSocial", e.target.value)} placeholder="Ej: MiniMarket Barinas C.A." required />
+              <input className={inputCls} value={form.razonSocial} onChange={(e) => set("razonSocial", e.target.value)} placeholder="MiniMarket Barinas C.A." required />
             </label>
             <label className="flex flex-col">
               <span className={labelCls}>Teléfono de la Empresa</span>
@@ -392,13 +580,33 @@ export default function ModuloEmpresas() {
               </select>
             </label>
             <label className="flex flex-col">
-              <span className={labelCls}>Nombre Reducido</span>
+              <span className={labelCls}>Nombre Reducido (Branding)</span>
               <input className={inputCls} value={form.nombreCorto} onChange={(e) => set("nombreCorto", e.target.value)} placeholder="Ej: AgroBarinas" />
             </label>
-            <label className="flex flex-col">
-              <span className={labelCls}>URL del Logo</span>
-              <input className={inputCls} value={form.logoUrl} onChange={(e) => set("logoUrl", e.target.value)} placeholder="https://.../logo.png" />
-            </label>
+
+            {/* Logo upload local (externo) o URL */}
+            <div className="flex flex-col col-span-2 gap-3 border border-slate-100 p-4 rounded-2xl bg-slate-50/30">
+              <span className={labelCls}>Cargar Logo Corporativo</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label className="flex flex-col justify-center">
+                  <span className="text-xs text-slate-500 mb-1">Subir imagen desde tu equipo</span>
+                  <input type="file" accept="image/*" onChange={handleLogoUpload} className="text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+                  {subiendoLogo && <span className="text-xs text-slate-400 mt-1 animate-pulse">Subiendo imagen al servidor...</span>}
+                </label>
+                <label className="flex flex-col">
+                  <span className="text-xs text-slate-500 mb-1">O escribe la URL del Logo</span>
+                  <input className={inputCls} value={form.logoUrl} onChange={(e) => set("logoUrl", e.target.value)} placeholder="https://.../logo.png" />
+                </label>
+              </div>
+              {form.logoUrl && (
+                <div className="mt-2 flex items-center gap-3">
+                  <img src={form.logoUrl} alt="Vista Previa" className="h-12 w-12 rounded-xl object-contain border border-slate-200 bg-white" />
+                  <span className="text-xs text-slate-400 truncate">{form.logoUrl}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Redes Sociales */}
             <label className="flex flex-col">
               <span className={labelCls}>Sitio Web</span>
               <input className={inputCls} value={form.sitioWeb} onChange={(e) => set("sitioWeb", e.target.value)} placeholder="https://miempresa.com" />
@@ -423,7 +631,9 @@ export default function ModuloEmpresas() {
               <span className={labelCls}>X (Twitter)</span>
               <input className={inputCls} value={form.x} onChange={(e) => set("x", e.target.value)} placeholder="@miempresa" />
             </label>
-            <div className="flex items-center gap-4">
+
+            {/* Colores */}
+            <div className="flex items-center gap-4 col-span-2 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
               <label className="flex flex-1 flex-col">
                 <span className={labelCls}>Color Primario</span>
                 <input type="color" className="mt-1 h-10 w-full cursor-pointer rounded-xl border border-slate-200" value={form.colorPrimario} onChange={(e) => set("colorPrimario", e.target.value)} />
@@ -436,35 +646,10 @@ export default function ModuloEmpresas() {
           </div>
         </section>
 
-        {/* --- Datos del Dueño --- */}
+        {/* 3. Plan y Vigencia (Tercero) */}
         <section>
-          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Datos del Dueño</h3>
-          <div className="mt-3 grid grid-cols-2 gap-4">
-            <label className="flex flex-col">
-              <span className={labelCls}>Nombre Completo</span>
-              <input className={inputCls} value={form.nombreAdmin} onChange={(e) => set("nombreAdmin", e.target.value)} placeholder="Ej: Carlos Gerente" required />
-            </label>
-            <label className="flex flex-col">
-              <span className={labelCls}>Correo (su acceso al sistema)</span>
-              <input type="email" className={inputCls} value={form.emailAdmin} onChange={(e) => set("emailAdmin", e.target.value)} placeholder="dueno@empresa.com" required />
-              <p className="mt-1 text-xs text-slate-400">El dueño inicia sesión con este correo.</p>
-            </label>
-            <label className="flex flex-col">
-              <span className={labelCls}>Teléfono del Dueño</span>
-              <input className={inputCls} value={form.telefonoAdmin} onChange={(e) => set("telefonoAdmin", e.target.value)} placeholder="+584141234567" />
-            </label>
-            <label className="flex flex-col">
-              <span className={labelCls}>Clave Temporal</span>
-              <input type="password" className={inputCls} value={form.claveTemporal} onChange={(e) => set("claveTemporal", e.target.value)} required />
-              <p className="mt-1 text-xs text-slate-400">El cliente deberá cambiar esta clave obligatoriamente en su primer inicio de sesión.</p>
-            </label>
-          </div>
-        </section>
-
-        {/* --- Plan y Vigencia --- */}
-        <section>
-          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Plan y Vigencia</h3>
-          <div className="mt-3 grid grid-cols-2 gap-4">
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-100 pb-2">3. Plan y Módulos Autorizados</h3>
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
             <label className="flex flex-col col-span-2">
               <span className={labelCls}>Plan de Suscripción</span>
               <select className={inputCls} value={form.planId} onChange={(e) => seleccionarPlan(e.target.value)} required>
@@ -473,10 +658,10 @@ export default function ModuloEmpresas() {
                   <option key={p.id} value={p.id}>{p.nombre} — ${p.precio_mensual}/mes</option>
                 ))}
               </select>
-              <p className="mt-1 text-xs text-slate-400">Al elegir un plan se precargan sus módulos y agentes abajo — puedes ajustarlos después.</p>
+              <p className="mt-1 text-[10px] text-slate-400">Al elegir un plan se precargan sus módulos y agentes abajo.</p>
             </label>
             <label className="flex flex-col">
-              <span className={labelCls}>Fecha de Inicio de Suscripción</span>
+              <span className={labelCls}>Fecha de Inicio</span>
               <input type="date" className={inputCls} value={form.fechaInicio} onChange={(e) => set("fechaInicio", e.target.value)} required />
             </label>
             <label className="flex flex-col">
@@ -484,112 +669,237 @@ export default function ModuloEmpresas() {
               <input type="date" className={inputCls} value={form.fechaVencimiento} onChange={(e) => set("fechaVencimiento", e.target.value)} required />
             </label>
           </div>
+
+          <div className="mt-6 border border-slate-100 p-5 rounded-3xl bg-slate-50/20">
+            <MatrizModulosAgentes
+              modulos={modulos}
+              onToggleModulo={toggleModulo}
+              agentesIA={agentesIA}
+              onToggleAgenteIA={toggleAgenteIA}
+            />
+          </div>
         </section>
 
-        {/* --- Matriz Táctica de Módulos Aprobados y Guías de IA --- */}
-        <MatrizModulosAgentes
-          modulos={modulos}
-          onToggleModulo={toggleModulo}
-          agentesIA={agentesIA}
-          onToggleAgenteIA={toggleAgenteIA}
-        />
-
-        <button
-          type="submit"
-          disabled={enviando}
-          className="w-full rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:bg-slate-700 hover:shadow-md disabled:bg-slate-400"
-        >
-          {enviando ? "Creando Empresa..." : "Crear Empresa"}
-        </button>
+        <div className="flex gap-4">
+          {editMode && (
+            <button
+              type="button"
+              onClick={cancelarEdicion}
+              className="w-1/3 rounded-2xl border border-slate-200 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              Cancelar Edición
+            </button>
+          )}
+          <button
+            type="submit"
+            disabled={enviando}
+            className={`rounded-2xl py-3 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:shadow-md disabled:bg-slate-400 ${
+              editMode ? "bg-blue-600 hover:bg-blue-700 w-2/3" : "bg-slate-900 hover:bg-slate-700 w-full"
+            }`}
+          >
+            {enviando ? "Guardando..." : editMode ? "Guardar Cambios de la Empresa" : "Registrar Nueva Empresa"}
+          </button>
+        </div>
       </form>
 
-      {/* --- Tabla de Empresas Activas --- */}
-      <section className="rounded-2xl border border-slate-100/80 bg-white shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-100 bg-slate-50 text-left">
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Razón Social</th>
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">RIF</th>
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Plan</th>
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Usuarios</th>
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Módulos Activos</th>
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Vencimiento</th>
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Estado</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">Acciones</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {empresas.map((emp) => {
-              const activos = Object.values(emp.modulos).filter(Boolean).length;
-              const esEmpresaPropia = emp.id === suscripcion.empresaId;
-              const fechaVencimiento = esEmpresaPropia ? suscripcion.fechaVencimiento : emp.fechaVencimiento;
-              const estado = esEmpresaPropia ? suscripcion.estado : emp.estado;
-              return (
-                <tr key={emp.id}>
-                  <td className="px-4 py-3 font-medium text-slate-700">
-                    {emp.razonSocial}
-                    {esEmpresaPropia && suscripcion.reportePendiente && (
-                      <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700">
-                        <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />
-                        PAGO PENDIENTE POR REVISAR
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-slate-500">{emp.rif}</td>
-                  <td className="px-4 py-3 text-slate-600">{emp.plan}</td>
-                  <td className="px-4 py-3 text-slate-600">
-                    <span className={emp.usuariosCreados >= emp.limiteUsuarios ? "font-bold text-rose-600" : "font-semibold text-slate-700"}>
-                      {emp.usuariosCreados}
-                    </span>
-                    {" / "}{emp.limiteUsuarios}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{activos} / {MODULOS_ERP.length}</td>
-                  <td className="px-4 py-3"><BadgeVencimiento fecha={fechaVencimiento} /></td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                        estado === "Activo" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
-                      }`}
-                    >
-                      {estado}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => abrirHistorial(emp.id)}
-                        title="Historial de Pagos"
-                        className="rounded-full bg-slate-100 p-2 text-slate-500 transition-colors duration-300 hover:bg-slate-200 hover:text-slate-900"
-                      >
-                        🧾
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleEstado(emp.id)}
-                        className={`rounded-full px-3 py-1.5 text-xs font-bold text-white transition-colors duration-300 ${
-                          estado === "Activo" ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700"
-                        }`}
-                      >
-                        {estado === "Activo" ? "Suspender Acceso" : "Activar Manual"}
-                      </button>
-                    </div>
-                  </td>
+      {/* --- Lista de Clientes Registrados --- */}
+      <section className="rounded-2xl border border-slate-100/80 bg-white shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden space-y-4 p-6">
+        <h3 className="text-lg font-black tracking-tight text-slate-900">Listado de Empresas Clientes</h3>
+        
+        {cargandoEmpresas ? (
+          <p className="text-sm text-slate-400 animate-pulse py-4 text-center">Cargando listado de empresas...</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50 text-left">
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Razón Social</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">RIF</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Plan</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Dueño / Admin</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Vencimiento</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Estado</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">Acciones</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {empresas.map((emp) => {
+                  const planName = catalogoPlanes.find(p => p.id === emp.plan_id)?.nombre || "Sin Plan";
+                  const esEmpresaPropia = emp.id === suscripcion.empresaId;
+                  const fechaVencimiento = esEmpresaPropia ? suscripcion.fechaVencimiento : (emp.fecha_vencimiento || "");
+                  const estado = esEmpresaPropia ? (suscripcion.estado === "Activo" ? "activo" : "suspendido") : emp.status;
+
+                  return (
+                    <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-slate-700">
+                        <div className="flex items-center gap-3">
+                          {emp.logo_url && <img src={emp.logo_url} alt="Logo" className="h-7 w-7 rounded-lg object-contain bg-slate-50 border border-slate-100" />}
+                          <div>
+                            <div>{emp.nombre_comercial}</div>
+                            {esEmpresaPropia && suscripcion.reportePendiente && (
+                              <div className="mt-0.5 inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-black text-blue-700">
+                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
+                                PAGO PENDIENTE POR REVISAR
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-500">{emp.rif}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600 font-semibold">{planName}</td>
+                      <td className="px-4 py-3 text-xs">
+                        <div className="text-slate-700 font-semibold">{emp.owner_nombre || "Sin Dueño"}</div>
+                        <div className="text-slate-400 font-mono">{emp.owner_email}</div>
+                      </td>
+                      <td className="px-4 py-3"><BadgeVencimiento fecha={fechaVencimiento} /></td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider ${
+                            estado === "activo" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+                          }`}
+                        >
+                          {estado === "activo" ? "Activo" : "Suspendido"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => iniciarEdicion(emp)}
+                            title="Editar Datos"
+                            className="rounded-full bg-slate-100 p-2 text-slate-600 transition-colors hover:bg-blue-50 hover:text-blue-700"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => abrirHistorial(emp.id)}
+                            title="Historial de Pagos"
+                            className="rounded-full bg-slate-100 p-2 text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-700"
+                          >
+                            🧾
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleEstado(emp)}
+                            className={`rounded-full px-2.5 py-1 text-xs font-bold text-white transition-colors ${
+                              estado === "activo" ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700"
+                            }`}
+                          >
+                            {estado === "activo" ? "Suspender" : "Activar"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => eliminarEmpresa(emp.id)}
+                            disabled={emp.id === 1}
+                            title="Eliminar Empresa"
+                            className="rounded-full bg-slate-100 p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors disabled:opacity-30 disabled:hover:bg-slate-100"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
-      {/* --- Modal Historial de Pagos --- */}
+      {/* --- PANEL DE GESTIÓN DE PAGOS, COBROS Y PROMOCIONES (Punto 5) --- */}
+      <section className="rounded-2xl border border-slate-100/80 bg-white shadow-sm hover:shadow-md transition-all duration-300 p-6 space-y-6">
+        <div>
+          <h3 className="text-lg font-black tracking-tight text-slate-900">Panel de Control de Cobros y Promociones</h3>
+          <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mt-1">Gestión del contacto, cobranzas y ofertas a clientes activos</p>
+        </div>
+
+        {/* Datos Bancarios Referenciales para Enviar */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50/30 border border-blue-100 p-4 rounded-2xl">
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🏦 Cuentas de Cobro Nacional (Pago Móvil)</h4>
+            <p className="text-xs text-slate-600"><span className="font-semibold">Banco:</span> Banesco (0134)</p>
+            <p className="text-xs text-slate-600"><span className="font-semibold">RIF:</span> J-31294829-0</p>
+            <p className="text-xs text-slate-600"><span className="font-semibold">Teléfono:</span> 0414-1234567</p>
+          </div>
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🇺🇸 Cuentas de Cobro Internacional (Zelle)</h4>
+            <p className="text-xs text-slate-600"><span className="font-semibold">Correo Zelle:</span> pagos@3qsolutions.com</p>
+            <p className="text-xs text-slate-600"><span className="font-semibold">Titular:</span> 3Q Solutions Corp.</p>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-slate-50 text-left">
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Cliente</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Plan / Costo</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Vencimiento</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Acciones de Cobro</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {empresas.map((emp) => {
+                const plan = catalogoPlanes.find(p => p.id === emp.plan_id);
+                const planName = plan?.nombre || "Sin Plan";
+                const planPrice = plan?.precio_mensual || 0;
+                
+                return (
+                  <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-slate-700">{emp.nombre_comercial}</div>
+                      <div className="text-slate-400 text-xs font-mono">{emp.telefono || emp.owner_telefono}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-slate-700">{planName}</div>
+                      <div className="text-xs text-slate-400">${planPrice}/mes</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <BadgeVencimiento fecha={emp.fecha_vencimiento || ""} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => enviarWhatsApp(emp, "cobro")}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition-colors border border-emerald-100"
+                        >
+                          💬 Recordar Pago
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => enviarWhatsApp(emp, "promo")}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-100 transition-colors border border-purple-100"
+                        >
+                          🚀 Enviar Oferta
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => abrirHistorial(emp.id)}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200 transition-colors"
+                        >
+                          💵 Registrar Pago
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* --- Modal Historial de Pagos y Registrar Cobros --- */}
       {empresaModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setModalEmpresa(null)}>
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-8 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
               <div>
                 <h3 className="text-2xl font-black tracking-tight text-slate-900">Historial de Pagos</h3>
-                <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-slate-400">{empresaModal.razonSocial} · {empresaModal.rif}</p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-slate-400">{empresaModal.nombre_comercial} · RIF: {empresaModal.rif}</p>
               </div>
               <button
                 type="button"
@@ -602,32 +912,15 @@ export default function ModuloEmpresas() {
               </button>
             </div>
 
-            {pagoError && <p className="mt-3 text-sm font-medium text-red-600">{pagoError}</p>}
-
-            {empresaModal.id === suscripcion.empresaId && suscripcion.reportePendiente && (
-              <div className="mt-6 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-blue-700">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />
-                  Reporte de Pago del Cliente · Esperando Aprobación
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                  <p><span className="text-slate-400">Método:</span> <span className="font-semibold text-slate-700">{suscripcion.reportePendiente.metodo}</span></p>
-                  <p><span className="text-slate-400">Fecha:</span> <span className="font-semibold text-slate-700">{suscripcion.reportePendiente.fecha}</span></p>
-                  <p><span className="text-slate-400">Monto:</span> <span className="font-semibold text-slate-700">$ {suscripcion.reportePendiente.monto.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
-                  <p><span className="text-slate-400">Referencia:</span> <span className="font-mono font-semibold text-slate-700">{suscripcion.reportePendiente.referencia}</span></p>
-                  <p className="col-span-2"><span className="text-slate-400">Comprobante:</span> <span className="font-semibold text-slate-700">📎 {suscripcion.reportePendiente.recibo}</span></p>
-                </div>
-                <button
-                  type="button"
-                  onClick={aprobarSuscripcion}
-                  className="mt-4 w-full rounded-2xl bg-emerald-600 py-2.5 text-sm font-bold text-white transition-colors duration-300 hover:bg-emerald-700"
-                >
-                  Aprobar Suscripción (+30 días)
-                </button>
+            {pagoError && (
+              <div className="mt-4 bg-rose-50 text-rose-700 border border-rose-100 p-3 rounded-xl text-xs font-bold">
+                ⚠️ {pagoError}
               </div>
             )}
 
-            <form onSubmit={registrarPago} className="mt-6 grid grid-cols-2 gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            {/* Formulario para registrar pagos reales */}
+            <form onSubmit={registrarPago} className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 rounded-2xl border border-slate-100 bg-slate-50/50 p-5">
+              <span className="text-xs font-black uppercase tracking-wider text-slate-800 col-span-2">Registrar Nuevo Cobro</span>
               <label className="flex flex-col">
                 <span className={labelCls}>Fecha de Pago</span>
                 <input type="date" className={inputCls} value={pagoForm.fecha} onChange={(e) => setPagoForm((p) => ({ ...p, fecha: e.target.value }))} required />
@@ -637,20 +930,24 @@ export default function ModuloEmpresas() {
                 <input type="number" step="0.01" min="0" className={inputCls} value={pagoForm.monto} onChange={(e) => setPagoForm((p) => ({ ...p, monto: e.target.value }))} placeholder="0.00" required />
               </label>
               <label className="flex flex-col">
-                <span className={labelCls}>Referencia de Transacción</span>
-                <input className={inputCls} value={pagoForm.referencia} onChange={(e) => setPagoForm((p) => ({ ...p, referencia: e.target.value }))} placeholder="PM-12345" required />
+                <span className={labelCls}>Método de Pago</span>
+                <select className={inputCls} value={pagoForm.metodo} onChange={(e) => setPagoForm((p) => ({ ...p, metodo: e.target.value }))}>
+                  <option value="Pago Móvil">Pago Móvil</option>
+                  <option value="Zelle">Zelle</option>
+                  <option value="Transferencia">Transferencia</option>
+                  <option value="Efectivo">Efectivo</option>
+                </select>
               </label>
               <label className="flex flex-col">
-                <span className={labelCls}>Recibo de Pago / Capture</span>
-                <input
-                  type="file"
-                  accept="image/*,application/pdf"
-                  className={`${inputCls} py-1.5`}
-                  onChange={(e) => setPagoForm((p) => ({ ...p, recibo: e.target.files?.[0]?.name ?? "" }))}
-                />
+                <span className={labelCls}>Referencia Bancaria</span>
+                <input className={inputCls} value={pagoForm.referencia} onChange={(e) => setPagoForm((p) => ({ ...p, referencia: e.target.value }))} placeholder="PM-12345" required />
               </label>
-              <button type="submit" className="col-span-2 rounded-2xl bg-slate-900 py-2.5 text-sm font-bold text-white transition-all duration-300 hover:bg-slate-700">
-                Registrar Pago
+              <label className="flex flex-col col-span-2">
+                <span className={labelCls}>Comprobante (URL o Nombre)</span>
+                <input className={inputCls} value={pagoForm.recibo} onChange={(e) => setPagoForm((p) => ({ ...p, recibo: e.target.value }))} placeholder="Capture_pago.png" />
+              </label>
+              <button type="submit" className="col-span-2 rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white transition-all duration-300 hover:bg-slate-700 shadow-sm mt-2">
+                Registrar Pago (+30 días)
               </button>
             </form>
 
@@ -660,25 +957,32 @@ export default function ModuloEmpresas() {
                   <tr className="border-b border-slate-100 bg-slate-50 text-left">
                     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Fecha</th>
                     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Monto</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Referencia</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Método / Referencia</th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">Recibo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {empresaModal.pagos.length === 0 && (
+                  {pagosFiltrados.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-400">Sin pagos registrados.</td>
+                      <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-400">Sin pagos registrados en la base de datos.</td>
                     </tr>
                   )}
-                  {empresaModal.pagos.map((p) => (
+                  {pagosFiltrados.map((p) => (
                     <tr key={p.id}>
-                      <td className="px-4 py-3 text-slate-600">{p.fecha}</td>
-                      <td className="px-4 py-3 font-semibold text-slate-700">$ {p.monto.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td className="px-4 py-3 font-mono text-slate-500">{p.referencia}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button type="button" className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 transition-colors duration-300 hover:bg-slate-200">
-                          📎 {p.recibo}
-                        </button>
+                      <td className="px-4 py-3 text-slate-600 text-xs">{p.fecha}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-700 text-xs">$ {p.monto.toLocaleString("es-VE", { minimumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-xs">
+                        <div className="font-semibold text-slate-600">{p.metodo}</div>
+                        <div className="font-mono text-[10px] text-slate-400">{p.referencia}</div>
+                      </td>
+                      <td className="px-4 py-3 text-right text-xs">
+                        {p.comprobante ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                            📎 {p.comprobante}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-300">Ninguno</span>
+                        )}
                       </td>
                     </tr>
                   ))}

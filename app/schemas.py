@@ -21,6 +21,8 @@ class RegistroEmpresaAdmin(BaseModel):
     tiktok: Optional[str] = None
     x: Optional[str] = None
     modulos_override: Optional[dict] = None
+    fecha_inicio: Optional[str] = None
+    fecha_vencimiento: Optional[str] = None
 
     # Branding del inquilino (nombre corto, logo y paleta de colores)
     nombre_corto: Optional[str] = None
@@ -1376,4 +1378,82 @@ class TurnoCajaResponse(BaseModel):
 class EstadoTurnoResponse(BaseModel):
     turno_abierto: bool
     turno: Optional[TurnoCajaResponse] = None
+
+
+# --- CRUD de Empresas y Gestión de Pagos (SaaS Maestro) ---
+class EmpresaSaaSResponse(BaseModel):
+    id: int
+    rif: str
+    nombre_comercial: str
+    nombre_corto: Optional[str] = None
+    telefono: Optional[str] = None
+    direccion: Optional[str] = None
+    tipo_negocio: TipoNegocio
+    plan_id: Optional[int] = None
+    sitio_web: Optional[str] = None
+    instagram: Optional[str] = None
+    facebook: Optional[str] = None
+    whatsapp: Optional[str] = None
+    tiktok: Optional[str] = None
+    x: Optional[str] = None
+    modulos_override: Optional[Dict[str, bool]] = None
+    color_primario: str
+    color_secundario: str
+    logo_url: Optional[str] = None
+    status: str
+    fecha_inicio: Optional[str] = None
+    fecha_vencimiento: Optional[str] = None
+    created_at: datetime.datetime
+
+    owner_id: Optional[int] = None
+    owner_nombre: Optional[str] = None
+    owner_email: Optional[str] = None
+    owner_telefono: Optional[str] = None
+
+class EmpresaSaaSUpdate(BaseModel):
+    nombre_comercial: str
+    rif: str
+    telefono: Optional[str] = None
+    direccion: Optional[str] = None
+    tipo_negocio: TipoNegocio
+    plan_id: Optional[int] = None
+    sitio_web: Optional[str] = None
+    instagram: Optional[str] = None
+    facebook: Optional[str] = None
+    whatsapp: Optional[str] = None
+    tiktok: Optional[str] = None
+    x: Optional[str] = None
+    modulos_override: Optional[Dict[str, bool]] = None
+    nombre_corto: Optional[str] = None
+    logo_url: Optional[str] = None
+    color_primario: Optional[str] = None
+    color_secundario: Optional[str] = None
+    status: str
+    fecha_inicio: Optional[str] = None
+    fecha_vencimiento: Optional[str] = None
+
+    owner_nombre: str
+    owner_email: str
+    owner_telefono: Optional[str] = None
+    owner_password: Optional[str] = None
+
+class SaasPagoCreate(BaseModel):
+    empresa_id: int
+    monto: float
+    metodo: str
+    referencia: str
+    comprobante: Optional[str] = None
+    fecha: str
+    extender_dias: Optional[int] = 30
+
+class SaasPagoResponse(BaseModel):
+    id: int
+    empresa_id: int
+    empresa_nombre: str
+    monto: float
+    metodo: str
+    referencia: str
+    comprobante: Optional[str] = None
+    fecha: str
+    created_at: datetime.datetime
 

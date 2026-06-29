@@ -8,6 +8,7 @@ from app.models.base import Base
 from app.models.empresa import Empresa
 from app.models.usuario import Usuario
 from app.models.plan import Plan
+from app.models.saas_pago import SaasPago
 from app.models.cliente import Cliente
 from app.models.producto import Producto
 from app.models.ticket import Ticket

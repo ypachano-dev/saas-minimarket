@@ -1,9 +1,13 @@
 *.db
+*.db.bak-*
 *.sqlite3
 __pycache__/
 venv/
 .git/
 *.log
+
+# Logos subidos por los clientes desde la Consola SaaS Maestro
+static/logos/
 
 # Variables de entorno con credenciales (ANTHROPIC_API_KEY, etc.)
 .env

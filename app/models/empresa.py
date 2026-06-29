@@ -73,5 +73,8 @@ class Empresa(Base):
     ticket_texto_pie: Mapped[str | None] = mapped_column(Text, nullable=True)
     ticket_desglosar_impuestos: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    fecha_inicio: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    fecha_vencimiento: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
     status: Mapped[str] = mapped_column(String(20), default="activo") # activo, suspendido
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
