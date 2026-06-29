@@ -703,6 +703,102 @@ def actualizar_cliente(
 
     return cliente
 
+def validar_reglas_producto(
+    db: Session,
+    empresa_id: int,
+    nombre: str,
+    linea: Optional[str],
+    codigo_interno: Optional[str],
+    producto_id: Optional[int] = None
+) -> str:
+    # 1. Validar duplicación de nombre (case-insensitive y sin espacios adicionales)
+    nombre_normalizado = " ".join(nombre.strip().split()).lower()
+    
+    query_nombre = db.query(Producto).filter(
+        Producto.empresa_id == empresa_id,
+        func.lower(Producto.nombre) == nombre_normalizado
+    )
+    if producto_id is not None:
+        query_nombre = query_nombre.filter(Producto.id != producto_id)
+        
+    existente_nombre = query_nombre.first()
+    if existente_nombre:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ya existe un producto con el nombre '{existente_nombre.nombre}' (insensible a mayúsculas/minúsculas). "
+                   f"Debe haber una diferencia semántica (ej. 'Pollo entero' o 'Pollo despresado')."
+        )
+
+    # 2. Generar/Validar SKU
+    prefix = None
+    if linea:
+        l_lower = linea.lower().strip()
+        if "carnicería" in l_lower or "carniceria" in l_lower:
+            prefix = "C"
+        elif "víveres" in l_lower or "viveres" in l_lower:
+            prefix = "V"
+        elif "charcutería" in l_lower or "charcuteria" in l_lower:
+            prefix = "CH"
+            
+    if prefix:
+        import re
+        codigo_limpio = codigo_interno.strip() if codigo_interno else ""
+        
+        # Si está vacío o no empieza con el prefijo correcto
+        if not codigo_limpio or not codigo_limpio.upper().startswith(prefix):
+            # Obtener el número correlativo más alto para este prefijo
+            prefix_like = f"{prefix}%"
+            existing_codes = db.query(Producto.codigo_interno).filter(
+                Producto.empresa_id == empresa_id,
+                Producto.codigo_interno.like(prefix_like)
+            ).all()
+            
+            existing_nums = []
+            for (code,) in existing_codes:
+                match = re.search(r'\d+$', code)
+                if match:
+                    existing_nums.append(int(match.group()))
+            
+            next_num = max(existing_nums) + 1 if existing_nums else 1
+            codigo_final = f"{prefix}-{next_num:03d}"
+        else:
+            # Empieza con el prefijo, nos aseguramos de que esté en mayúsculas y formateado
+            codigo_final = codigo_limpio.upper()
+            match = re.search(r'\d+$', codigo_final)
+            if match:
+                num_str = match.group()
+                codigo_final = f"{prefix}-{int(num_str):03d}"
+    else:
+        # Si no tiene prefijo especial, usar el provisto o generar uno genérico
+        codigo_final = codigo_interno.strip() if codigo_interno else None
+        if not codigo_final:
+            import re
+            existing_codes = db.query(Producto.codigo_interno).filter(Producto.empresa_id == empresa_id).all()
+            existing_nums = []
+            for (code,) in existing_codes:
+                match = re.search(r'\d+$', code)
+                if match:
+                    existing_nums.append(int(match.group()))
+            next_num = max(existing_nums) + 1 if existing_nums else 1
+            codigo_final = f"PROD-{next_num:03d}"
+            
+    # Validar que el código final no esté duplicado
+    query_codigo = db.query(Producto).filter(
+        Producto.empresa_id == empresa_id,
+        Producto.codigo_interno == codigo_final
+    )
+    if producto_id is not None:
+        query_codigo = query_codigo.filter(Producto.id != producto_id)
+        
+    existente_codigo = query_codigo.first()
+    if existente_codigo:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El SKU '{codigo_final}' ya está registrado para el producto '{existente_codigo.nombre}'."
+        )
+        
+    return codigo_final
+
 # 7. Crear Producto: la empresa_id se inyecta desde el token, nunca desde el body
 @app.post("/api/v1/productos", tags=["Productos"], response_model=ProductoResponse, status_code=status.HTTP_201_CREATED)
 def crear_producto(
@@ -710,9 +806,20 @@ def crear_producto(
     db: Session = Depends(get_db),
     usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
 ):
+    codigo_final = validar_reglas_producto(
+        db=db,
+        empresa_id=usuario_actual.eid,
+        nombre=datos.nombre,
+        linea=datos.linea,
+        codigo_interno=datos.codigo_interno
+    )
+    
+    payload = datos.model_dump()
+    payload["codigo_interno"] = codigo_final
+
     nuevo_producto = Producto(
         empresa_id=usuario_actual.eid,
-        **datos.model_dump()
+        **payload
     )
 
     try:
@@ -780,6 +887,24 @@ def actualizar_producto(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado.")
 
     datos_actualizados = datos.model_dump(exclude_unset=True)
+
+    # Solo validamos si se está modificando el nombre, la línea o el SKU
+    if "nombre" in datos_actualizados or "linea" in datos_actualizados or "codigo_interno" in datos_actualizados:
+        nombre_validar = datos_actualizados.get("nombre", producto.nombre)
+        linea_validar = datos_actualizados.get("linea", producto.linea)
+        codigo_validar = datos_actualizados.get("codigo_interno", producto.codigo_interno)
+        
+        codigo_final = validar_reglas_producto(
+            db=db,
+            empresa_id=usuario_actual.eid,
+            nombre=nombre_validar,
+            linea=linea_validar,
+            codigo_interno=codigo_validar,
+            producto_id=producto.id
+        )
+        if "codigo_interno" in datos_actualizados or codigo_final != producto.codigo_interno:
+            datos_actualizados["codigo_interno"] = codigo_final
+
     for campo, valor in datos_actualizados.items():
         setattr(producto, campo, valor)
 

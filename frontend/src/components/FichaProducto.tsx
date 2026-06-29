@@ -143,9 +143,135 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
   const [esProveedorOtro, setEsProveedorOtro] = useState(false);
   const [nuevoProveedorTxt, setNuevoProveedorTxt] = useState("");
   
+  const [todosLosProductos, setTodosLosProductos] = useState<ProductoEditar[]>([]);
+  const [marcasExistentes, setMarcasExistentes] = useState<string[]>([]);
+  const [lineasExistentes, setLineasExistentes] = useState<string[]>([]);
+  const [tiposExistentes, setTiposExistentes] = useState<string[]>([]);
+  const [ubicacionesExistentes, setUbicacionesExistentes] = useState<string[]>([]);
+
+  // Para agregar elementos nuevos
+  const [esMarcaOtro, setEsMarcaOtro] = useState(false);
+  const [nuevaMarcaTxt, setNuevaMarcaTxt] = useState("");
+
+  const [esLineaOtro, setEsLineaOtro] = useState(false);
+  const [nuevaLineaTxt, setNuevaLineaTxt] = useState("");
+
+  const [esTipoOtro, setEsTipoOtro] = useState(false);
+  const [nuevoTipoTxt, setNuevoTipoTxt] = useState("");
+
+  const [esUbicacionOtro, setEsUbicacionOtro] = useState(false);
+  const [nuevaUbicacionTxt, setNuevaUbicacionTxt] = useState("");
+
   const inputProductoRef = useRef<HTMLInputElement>(null);
   
   const [guardadosRecientes, setGuardadosRecientes] = useState<any[]>([]);
+
+  // Sugerir SKU basado en la línea seleccionada
+  function sugerirSKUParaLinea(lineaSeleccionada: string, listadoProd?: ProductoEditar[]) {
+    if (!lineaSeleccionada) return;
+    
+    // Solo sugerir SKU si no estamos editando o si el SKU actual está vacío
+    if (productoEditar && form.codigo_interno) return;
+
+    let prefix = "";
+    const l_lower = lineaSeleccionada.toLowerCase().trim();
+    if (l_lower.includes("carnicería") || l_lower.includes("carniceria")) {
+      prefix = "C";
+    } else if (l_lower.includes("víveres") || l_lower.includes("viveres")) {
+      prefix = "V";
+    } else if (l_lower.includes("charcutería") || l_lower.includes("charcuteria")) {
+      prefix = "CH";
+    } else {
+      return; // Sin prefijo
+    }
+
+    const prods = listadoProd || todosLosProductos;
+
+    // Buscar el número correlativo más alto
+    const prefixLike = prefix + "-";
+    let maxNum = 0;
+    prods.forEach((p) => {
+      const code = p.codigo_interno.toUpperCase();
+      if (code.startsWith(prefixLike) || code.startsWith(prefix)) {
+        const match = code.match(/\d+$/);
+        if (match) {
+          const num = parseInt(match[0], 10);
+          if (num > maxNum) maxNum = num;
+        }
+      }
+    });
+
+    const nextNum = maxNum + 1;
+    const padding = nextNum.toString().padStart(3, "0");
+    set("codigo_interno", `${prefix}-${padding}`);
+  }
+
+  function cargarProductosYFiltros(listadoExistente?: ProductoEditar[]) {
+    if (listadoExistente) {
+      const prodList = listadoExistente;
+      setTodosLosProductos(prodList);
+      const marcas = Array.from(new Set([
+        ...prodList.map(p => p.marca?.trim()).filter(Boolean),
+        productoEditar?.marca?.trim()
+      ].filter(Boolean))) as string[];
+      const lineas = Array.from(new Set([
+        ...prodList.map(p => p.linea?.trim()).filter(Boolean),
+        productoEditar?.linea?.trim()
+      ].filter(Boolean))) as string[];
+      const tipos = Array.from(new Set([
+        ...prodList.map(p => p.clase_o_tipo?.trim()).filter(Boolean),
+        productoEditar?.clase_o_tipo?.trim()
+      ].filter(Boolean))) as string[];
+      const ubicaciones = Array.from(new Set([
+        ...prodList.map(p => p.ubicacion?.trim()).filter(Boolean),
+        productoEditar?.ubicacion?.trim()
+      ].filter(Boolean))) as string[];
+
+      setMarcasExistentes(marcas.sort());
+      setLineasExistentes(lineas.sort());
+      setTiposExistentes(tipos.sort());
+      setUbicacionesExistentes(ubicaciones.sort());
+      return;
+    }
+
+    apiClient.get<ProductoEditar[]>("/api/v1/productos", { params: { limit: 1000 } })
+      .then((res) => {
+        const prodList = res.data;
+        setTodosLosProductos(prodList);
+
+        // Extraer valores únicos no nulos y ordenarlos
+        const marcas = Array.from(new Set([
+          ...prodList.map(p => p.marca?.trim()).filter(Boolean),
+          productoEditar?.marca?.trim()
+        ].filter(Boolean))) as string[];
+        
+        const lineas = Array.from(new Set([
+          ...prodList.map(p => p.linea?.trim()).filter(Boolean),
+          productoEditar?.linea?.trim()
+        ].filter(Boolean))) as string[];
+        
+        const tipos = Array.from(new Set([
+          ...prodList.map(p => p.clase_o_tipo?.trim()).filter(Boolean),
+          productoEditar?.clase_o_tipo?.trim()
+        ].filter(Boolean))) as string[];
+        
+        const ubicaciones = Array.from(new Set([
+          ...prodList.map(p => p.ubicacion?.trim()).filter(Boolean),
+          productoEditar?.ubicacion?.trim()
+        ].filter(Boolean))) as string[];
+
+        setMarcasExistentes(marcas.sort());
+        setLineasExistentes(lineas.sort());
+        setTiposExistentes(tipos.sort());
+        setUbicacionesExistentes(ubicaciones.sort());
+        
+        // Si hay una línea ya seleccionada al cargar, sugerir SKU (caso nuevo producto)
+        if (form.linea && !productoEditar) {
+          sugerirSKUParaLinea(form.linea, prodList);
+        }
+      })
+      .catch(() => {});
+  }
 
   useEffect(() => {
     apiClient.get("/api/v1/proveedores")
@@ -153,7 +279,10 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
         setDbProveedores(res.data);
       })
       .catch(() => {});
-  }, []);
+
+    cargarProductosYFiltros();
+  }, [productoEditar]);
+
   const [msg, setMsg] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   const [escaneando, setEscaneando] = useState(false);
   const [pasoIA, setPasoIA] = useState("");
@@ -354,24 +483,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
     }
   }
 
-  // Simulación con archivos falsos para pruebas rápidas
-  function simularEscanerIA(frontalFilename: string, traseraFilename: string | null = null, previewFrontalUrl: string, previewTraseraUrl: string | null = null) {
-    const fakeFrontal = new File(["fake_content"], frontalFilename, { type: "image/png" });
-    const fakeTrasera = traseraFilename ? new File(["fake_content"], traseraFilename, { type: "image/png" }) : null;
-    
-    setFotoFrontal(fakeFrontal);
-    setPreviewFrontal(previewFrontalUrl);
-    
-    if (fakeTrasera) {
-      setFotoTrasera(fakeTrasera);
-      setPreviewTrasera(previewTraseraUrl);
-    } else {
-      setFotoTrasera(null);
-      setPreviewTrasera(null);
-    }
-    
-    escanearArchivos(fakeFrontal, fakeTrasera);
-  }
+
 
   async function guardar(e: FormEvent) {
     e.preventDefault();
@@ -379,6 +491,22 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
 
     if (!form.codigo_interno.trim() || !form.nombre.trim()) {
       setMsg({ tipo: "error", texto: "Código Interno y Nombre son obligatorios." });
+      return;
+    }
+
+    // Validar nombre duplicado (insensible a mayúsculas/minúsculas y espacios adicionales)
+    const nombreNormalizado = form.nombre.trim().replace(/\s+/g, " ").toLowerCase();
+    const existeDuplicadoNombre = todosLosProductos.some((p) => {
+      if (productoEditar && p.id === productoEditar.id) return false;
+      const pNombreNorm = p.nombre.trim().replace(/\s+/g, " ").toLowerCase();
+      return pNombreNorm === nombreNormalizado;
+    });
+
+    if (existeDuplicadoNombre) {
+      setMsg({
+        tipo: "error",
+        texto: `Ya existe un producto registrado con el nombre "${form.nombre.trim()}" (insensible a mayúsculas/minúsculas). Debe diferenciarlo semánticamente (ej: "Pollo entero", "Pollo despresado").`
+      });
       return;
     }
 
@@ -452,6 +580,15 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
       setPreviewTrasera(null);
       setEsProveedorOtro(false);
       setNuevoProveedorTxt("");
+      setEsMarcaOtro(false);
+      setNuevaMarcaTxt("");
+      setEsLineaOtro(false);
+      setNuevaLineaTxt("");
+      setEsTipoOtro(false);
+      setNuevoTipoTxt("");
+      setEsUbicacionOtro(false);
+      setNuevaUbicacionTxt("");
+      cargarProductosYFiltros();
     } catch (err: any) {
       const detalle = err.response?.data?.detail ?? "No se pudo guardar la ficha del producto.";
       setMsg({ tipo: "error", texto: detalle });
@@ -528,7 +665,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
               ) : (
                 <div className="space-y-2">
                   <div className="text-3xl text-slate-400 group-hover:scale-110 transition-transform">📸</div>
-                  <p className="text-xs font-black text-slate-700 uppercase tracking-wider">Foto Frontal (Obligatoria)</p>
+                  <p className="text-xs font-black text-slate-700 uppercase tracking-wider">Foto Frontal (Opcional)</p>
                   <p className="text-[10px] text-slate-400 font-medium">Toma foto de la marca, nombre y cara principal</p>
                 </div>
               )}
@@ -587,109 +724,6 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
           </div>
         </div>
 
-        {/* Demo Plantillas de IA */}
-        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-2.5">
-          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">💡 Demos Rápidas de IA por Clase (Simula foto frontal y trasera):</p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => simularEscanerIA(
-                "harina_pan_frontal.png", 
-                "harina_pan_trasera.png",
-                "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=400&q=80",
-                "https://images.unsplash.com/photo-1608686207856-001b95cf60ca?auto=format&fit=crop&w=400&q=80"
-              )}
-              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-            >
-              🌾 Víveres: Harina PAN
-            </button>
-            <button
-              type="button"
-              onClick={() => simularEscanerIA(
-                "pepsi_cola_frontal.png", 
-                "pepsi_cola_trasera.png",
-                "https://images.unsplash.com/photo-1629203851122-3726ecdf080e?auto=format&fit=crop&w=400&q=80",
-                "https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=400&q=80"
-              )}
-              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-            >
-              🥤 Bebida: Pepsi Cola
-            </button>
-            <button
-              type="button"
-              onClick={() => simularEscanerIA(
-                "ibuprofeno_frontal.png", 
-                "ibuprofeno_trasera.png",
-                "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?auto=format&fit=crop&w=400&q=80",
-                "https://images.unsplash.com/photo-1607619275536-2479e0a298a6?auto=format&fit=crop&w=400&q=80"
-              )}
-              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-            >
-              💊 Medicina: Ibuprofeno
-            </button>
-            <button
-              type="button"
-              onClick={() => simularEscanerIA(
-                "martillo_stanley_frontal.png", 
-                "martillo_stanley_trasera.png",
-                "https://images.unsplash.com/photo-1586864387967-d02ef85d93e8?auto=format&fit=crop&w=400&q=80",
-                "https://images.unsplash.com/photo-1530124560677-bdaea02790a5?auto=format&fit=crop&w=400&q=80"
-              )}
-              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-            >
-              🛠️ Ferretería: Martillo Stanley
-            </button>
-            <button
-              type="button"
-              onClick={() => simularEscanerIA(
-                "queso_gouda_frontal.png", 
-                "queso_gouda_trasera.png",
-                "https://images.unsplash.com/photo-1486887396153-fa416525c108?auto=format&fit=crop&w=400&q=80",
-                "https://images.unsplash.com/photo-1528256015116-953e7f849dfb?auto=format&fit=crop&w=400&q=80"
-              )}
-              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-            >
-              🧀 Charcutería: Queso Gouda
-            </button>
-            <button
-              type="button"
-              onClick={() => simularEscanerIA(
-                "lomito_res_frontal.png", 
-                null,
-                "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=400&q=80",
-                null
-              )}
-              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-            >
-              🥩 Carne: Lomito de Res
-            </button>
-            <button
-              type="button"
-              onClick={() => simularEscanerIA(
-                "tomate_manzano_frontal.png", 
-                null,
-                "https://images.unsplash.com/photo-1595855759920-86582396756a?auto=format&fit=crop&w=400&q=80",
-                null
-              )}
-              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-            >
-              🍅 Fruver: Tomate Manzano
-            </button>
-            <button
-              type="button"
-              onClick={() => simularEscanerIA(
-                "chicco_lotion_frontal.png", 
-                "chicco_lotion_trasera.png",
-                "https://images.unsplash.com/photo-1515003197210-e0cd71810b5f?auto=format&fit=crop&w=400&q=80",
-                "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=400&q=80"
-              )}
-              className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-            >
-              🧴 Bebé: Loción Chicco
-            </button>
-          </div>
-        </div>
-
         {msg && (
           <MsgLine msg={msg} />
         )}
@@ -720,17 +754,88 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Marca</span>
-                <input className={inputCls} value={form.marca} onChange={(e) => set("marca", e.target.value)} placeholder="Ej: Vatel, Primor, Polar..." />
+                <select
+                  className={inputCls}
+                  value={esMarcaOtro ? "OTRO" : form.marca}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "OTRO") {
+                      setEsMarcaOtro(true);
+                      set("marca", "");
+                    } else {
+                      setEsMarcaOtro(false);
+                      set("marca", val);
+                    }
+                  }}
+                >
+                  <option value="">Seleccionar...</option>
+                  {marcasExistentes.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  <option value="OTRO">➕ Agregar otra...</option>
+                </select>
+                {esMarcaOtro && (
+                  <input
+                    type="text"
+                    className={`${inputCls} mt-2 bg-blue-50/30 border-blue-200`}
+                    value={nuevaMarcaTxt}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNuevaMarcaTxt(val);
+                      set("marca", val);
+                    }}
+                    placeholder="Nombre de la nueva marca..."
+                  />
+                )}
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Línea de Negocio (Crítica)</span>
-                <input className={inputCls} value={form.linea} onChange={(e) => set("linea", e.target.value)} placeholder="Ej: Víveres, Carnicería, Charcutería..." />
-                <div className="flex gap-1.5 mt-1.5">
+                <select
+                  className={inputCls}
+                  value={esLineaOtro ? "OTRO" : form.linea}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "OTRO") {
+                      setEsLineaOtro(true);
+                      set("linea", "");
+                    } else {
+                      setEsLineaOtro(false);
+                      set("linea", val);
+                      sugerirSKUParaLinea(val);
+                    }
+                  }}
+                >
+                  <option value="">Seleccionar...</option>
+                  {lineasExistentes.map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+                  <option value="OTRO">➕ Agregar otra...</option>
+                </select>
+                {esLineaOtro && (
+                  <input
+                    type="text"
+                    className={`${inputCls} mt-2 bg-blue-50/30 border-blue-200`}
+                    value={nuevaLineaTxt}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNuevaLineaTxt(val);
+                      set("linea", val);
+                      sugerirSKUParaLinea(val);
+                    }}
+                    placeholder="Nombre de la nueva línea de negocio..."
+                  />
+                )}
+                <div className="flex gap-1.5 mt-1.5 font-bold text-[10px] text-slate-400">
+                  Sugerir departamento rápido:
                   {DEPARTAMENTOS_PESAJE.map((d) => (
                     <button
                       key={d.key}
                       type="button"
-                      onClick={() => set("linea", d.key)}
+                      onClick={() => {
+                        setEsLineaOtro(false);
+                        set("linea", d.key);
+                        sugerirSKUParaLinea(d.key);
+                      }}
                       title="Si este producto se pesará en Balanza Digital, usa exactamente este valor para evitar errores de coincidencia."
                       className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full transition-colors"
                     >
@@ -741,7 +846,39 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Tipo / Categoría</span>
-                <input className={inputCls} value={form.clase_o_tipo} onChange={(e) => set("clase_o_tipo", e.target.value)} placeholder="Ej: Charcutería, Granos, Lácteos..." />
+                <select
+                  className={inputCls}
+                  value={esTipoOtro ? "OTRO" : form.clase_o_tipo}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "OTRO") {
+                      setEsTipoOtro(true);
+                      set("clase_o_tipo", "");
+                    } else {
+                      setEsTipoOtro(false);
+                      set("clase_o_tipo", val);
+                    }
+                  }}
+                >
+                  <option value="">Seleccionar...</option>
+                  {tiposExistentes.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                  <option value="OTRO">➕ Agregar otro...</option>
+                </select>
+                {esTipoOtro && (
+                  <input
+                    type="text"
+                    className={`${inputCls} mt-2 bg-blue-50/30 border-blue-200`}
+                    value={nuevoTipoTxt}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNuevoTipoTxt(val);
+                      set("clase_o_tipo", val);
+                    }}
+                    placeholder="Nombre de la nueva categoría/tipo..."
+                  />
+                )}
               </label>
               <label className="col-span-2 flex flex-col">
                 <span className={labelCls}>Descripción detallada</span>
@@ -824,7 +961,39 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Ubicación física (Pasillo / Estante)</span>
-                <input className={inputCls} value={form.ubicacion} onChange={(e) => set("ubicacion", e.target.value)} placeholder="Ej: Pasillo 2, Estante B" />
+                <select
+                  className={inputCls}
+                  value={esUbicacionOtro ? "OTRO" : form.ubicacion}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "OTRO") {
+                      setEsUbicacionOtro(true);
+                      set("ubicacion", "");
+                    } else {
+                      setEsUbicacionOtro(false);
+                      set("ubicacion", val);
+                    }
+                  }}
+                >
+                  <option value="">Seleccionar...</option>
+                  {ubicacionesExistentes.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                  <option value="OTRO">➕ Agregar otra...</option>
+                </select>
+                {esUbicacionOtro && (
+                  <input
+                    type="text"
+                    className={`${inputCls} mt-2 bg-blue-50/30 border-blue-200`}
+                    value={nuevaUbicacionTxt}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNuevaUbicacionTxt(val);
+                      set("ubicacion", val);
+                    }}
+                    placeholder="Nombre de la nueva ubicación..."
+                  />
+                )}
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Stock Mínimo Alerta</span>
