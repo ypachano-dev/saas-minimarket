@@ -1,8 +1,59 @@
 import { useRef, useState, useEffect, type FormEvent, type KeyboardEvent } from "react";
 import apiClient from "../api/client";
-import { DEPARTAMENTOS_PESAJE } from "../lib/departamentos";
 
 const PRESENTACIONES = ["Unidad", "Empaque", "Bulto", "Botella", "Frasco", "Pote", "Lata", "Caja", "Bolsa", "Blíster", "Granel"];
+
+// Líneas de negocio base — siempre disponibles aunque no haya productos creados aún
+const BASE_LINEAS_FIJAS = [
+  "Carnicería",
+  "Charcutería",
+  "Verdulería y Frutas",
+  "Víveres",
+  "Bebidas",
+  "Lácteos y Derivados",
+  "Limpieza y Hogar",
+  "Cuidado Personal",
+  "Panadería y Dulces",
+  "Ferretería",
+  "Otros",
+];
+
+// Ubicaciones físicas base — siempre disponibles para evitar errores de tipeo
+const BASE_UBICACIONES_FIJAS = [
+  "Cava Carnes",
+  "Área Charcutería",
+  "Pasillo 1",
+  "Pasillo 2",
+  "Pasillo 3",
+  "Anaquel A",
+  "Anaquel B",
+  "Congelador",
+  "Nevera 1",
+  "Nevera 2",
+  "Bodega",
+  "Mostrador",
+];
+
+// Mapa línea → prefijo SKU (normalizado a minúsculas sin tildes para la comparación)
+const LINEA_PREFIX_MAP: Record<string, string> = {
+  "carnicería": "C",
+  "carniceria": "C",
+  "charcutería": "CH",
+  "charcuteria": "CH",
+  "víveres": "V",
+  "viveres": "V",
+  "verdulería y frutas": "VF",
+  "verduleria y frutas": "VF",
+  "bebidas": "B",
+  "lácteos y derivados": "LD",
+  "lacteos y derivados": "LD",
+  "limpieza y hogar": "LH",
+  "cuidado personal": "CP",
+  "panadería y dulces": "PD",
+  "panaderia y dulces": "PD",
+  "ferretería": "F",
+  "ferreteria": "F",
+};
 
 const initial = {
   // Información básica
@@ -169,30 +220,17 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
   // Sugerir SKU basado en la línea seleccionada
   function sugerirSKUParaLinea(lineaSeleccionada: string, listadoProd?: ProductoEditar[]) {
     if (!lineaSeleccionada) return;
-    
-    // Solo sugerir SKU si no estamos editando o si el SKU actual está vacío
     if (productoEditar && form.codigo_interno) return;
 
-    let prefix = "";
-    const l_lower = lineaSeleccionada.toLowerCase().trim();
-    if (l_lower.includes("carnicería") || l_lower.includes("carniceria")) {
-      prefix = "C";
-    } else if (l_lower.includes("víveres") || l_lower.includes("viveres")) {
-      prefix = "V";
-    } else if (l_lower.includes("charcutería") || l_lower.includes("charcuteria")) {
-      prefix = "CH";
-    } else {
-      return; // Sin prefijo
-    }
+    const prefix = LINEA_PREFIX_MAP[lineaSeleccionada.toLowerCase().trim()];
+    if (!prefix) return;
 
     const prods = listadoProd || todosLosProductos;
-
-    // Buscar el número correlativo más alto
     const prefixLike = prefix + "-";
     let maxNum = 0;
     prods.forEach((p) => {
       const code = p.codigo_interno.toUpperCase();
-      if (code.startsWith(prefixLike) || code.startsWith(prefix)) {
+      if (code.startsWith(prefixLike)) {
         const match = code.match(/\d+$/);
         if (match) {
           const num = parseInt(match[0], 10);
@@ -207,30 +245,40 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
   }
 
   function cargarProductosYFiltros(listadoExistente?: ProductoEditar[]) {
-    if (listadoExistente) {
-      const prodList = listadoExistente;
-      setTodosLosProductos(prodList);
+    function buildListas(prodList: ProductoEditar[]) {
       const marcas = Array.from(new Set([
         ...prodList.map(p => p.marca?.trim()).filter(Boolean),
-        productoEditar?.marca?.trim()
+        productoEditar?.marca?.trim(),
       ].filter(Boolean))) as string[];
+
+      // Líneas: siempre incluir las base para que el select nunca arranque vacío
       const lineas = Array.from(new Set([
+        ...BASE_LINEAS_FIJAS,
         ...prodList.map(p => p.linea?.trim()).filter(Boolean),
-        productoEditar?.linea?.trim()
+        productoEditar?.linea?.trim(),
       ].filter(Boolean))) as string[];
+
       const tipos = Array.from(new Set([
         ...prodList.map(p => p.clase_o_tipo?.trim()).filter(Boolean),
-        productoEditar?.clase_o_tipo?.trim()
+        productoEditar?.clase_o_tipo?.trim(),
       ].filter(Boolean))) as string[];
+
+      // Ubicaciones: siempre incluir las base para evitar errores de tipeo
       const ubicaciones = Array.from(new Set([
+        ...BASE_UBICACIONES_FIJAS,
         ...prodList.map(p => p.ubicacion?.trim()).filter(Boolean),
-        productoEditar?.ubicacion?.trim()
+        productoEditar?.ubicacion?.trim(),
       ].filter(Boolean))) as string[];
 
       setMarcasExistentes(marcas.sort());
       setLineasExistentes(lineas.sort());
       setTiposExistentes(tipos.sort());
       setUbicacionesExistentes(ubicaciones.sort());
+    }
+
+    if (listadoExistente) {
+      setTodosLosProductos(listadoExistente);
+      buildListas(listadoExistente);
       return;
     }
 
@@ -238,34 +286,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
       .then((res) => {
         const prodList = res.data;
         setTodosLosProductos(prodList);
-
-        // Extraer valores únicos no nulos y ordenarlos
-        const marcas = Array.from(new Set([
-          ...prodList.map(p => p.marca?.trim()).filter(Boolean),
-          productoEditar?.marca?.trim()
-        ].filter(Boolean))) as string[];
-        
-        const lineas = Array.from(new Set([
-          ...prodList.map(p => p.linea?.trim()).filter(Boolean),
-          productoEditar?.linea?.trim()
-        ].filter(Boolean))) as string[];
-        
-        const tipos = Array.from(new Set([
-          ...prodList.map(p => p.clase_o_tipo?.trim()).filter(Boolean),
-          productoEditar?.clase_o_tipo?.trim()
-        ].filter(Boolean))) as string[];
-        
-        const ubicaciones = Array.from(new Set([
-          ...prodList.map(p => p.ubicacion?.trim()).filter(Boolean),
-          productoEditar?.ubicacion?.trim()
-        ].filter(Boolean))) as string[];
-
-        setMarcasExistentes(marcas.sort());
-        setLineasExistentes(lineas.sort());
-        setTiposExistentes(tipos.sort());
-        setUbicacionesExistentes(ubicaciones.sort());
-        
-        // Si hay una línea ya seleccionada al cargar, sugerir SKU (caso nuevo producto)
+        buildListas(prodList);
         if (form.linea && !productoEditar) {
           sugerirSKUParaLinea(form.linea, prodList);
         }
@@ -596,7 +617,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
   }
 
   return (
-    <div className="p-6 relative">
+    <div className="p-3 sm:p-6 relative">
       {/* Overlay del Escáner Láser de IA */}
       {escaneando && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/80 p-4">
@@ -621,7 +642,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
         </div>
       )}
 
-      <div className="rounded-3xl border border-slate-100/80 bg-white p-8 shadow-sm hover:shadow-md transition-all duration-300 space-y-6">
+      <div className="rounded-2xl sm:rounded-3xl border border-slate-100/80 bg-white p-4 sm:p-8 shadow-sm hover:shadow-md transition-all duration-300 space-y-6">
         <div className="flex flex-col gap-4 pb-4 border-b border-slate-100">
           <div>
             <h2 className="text-3xl font-black tracking-tight text-slate-900">{productoEditar ? `Editar: ${productoEditar.nombre}` : "Ficha de Catálogo"}</h2>
@@ -630,7 +651,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
             </p>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full mt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full mt-2">
             {/* Foto Frontal Upload Card */}
             <div className="relative group border-2 border-dashed border-slate-200 hover:border-blue-500 rounded-3xl p-4 transition-all duration-300 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-white text-center cursor-pointer min-h-[160px]"
                  onClick={() => inputFrontalRef.current?.click()}>
@@ -733,7 +754,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
           {/* --- Información Básica --- */}
           <section>
             <h3 className={seccionCls}>Información Básica</h3>
-            <div className="mt-3 grid grid-cols-2 gap-4">
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="flex flex-col">
                 <span className={labelCls}>Código Interno (SKU)</span>
                 <input className={inputCls} value={form.codigo_interno} onChange={(e) => set("codigo_interno", e.target.value)} placeholder="P004" required />
@@ -825,24 +846,6 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
                     placeholder="Nombre de la nueva línea de negocio..."
                   />
                 )}
-                <div className="flex gap-1.5 mt-1.5 font-bold text-[10px] text-slate-400">
-                  Sugerir departamento rápido:
-                  {DEPARTAMENTOS_PESAJE.map((d) => (
-                    <button
-                      key={d.key}
-                      type="button"
-                      onClick={() => {
-                        setEsLineaOtro(false);
-                        set("linea", d.key);
-                        sugerirSKUParaLinea(d.key);
-                      }}
-                      title="Si este producto se pesará en Balanza Digital, usa exactamente este valor para evitar errores de coincidencia."
-                      className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full transition-colors"
-                    >
-                      {d.label}
-                    </button>
-                  ))}
-                </div>
               </label>
               <label className="flex flex-col">
                 <span className={labelCls}>Tipo / Categoría</span>
@@ -880,7 +883,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
                   />
                 )}
               </label>
-              <label className="col-span-2 flex flex-col">
+              <label className="col-span-1 sm:col-span-2 flex flex-col">
                 <span className={labelCls}>Descripción detallada</span>
                 <textarea className={inputCls} rows={3} value={form.caracteristicas} onChange={(e) => set("caracteristicas", e.target.value)} placeholder="Componentes, presentación visual, notas relevantes..." />
               </label>
@@ -890,7 +893,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
           {/* --- Logística y Proveedor --- */}
           <section>
             <h3 className={seccionCls}>Logística y Proveedor</h3>
-            <div className="mt-3 grid grid-cols-2 gap-4">
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="flex flex-col">
                 <span className={labelCls}>Proveedor</span>
                 <select
@@ -1031,7 +1034,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
                   </button>
                 </div>
               </label>
-              <div className="grid grid-cols-2 gap-4 col-span-2 mt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 col-span-1 sm:col-span-2 mt-2">
                 <label className="flex flex-col">
                   <span className={labelCls}>Temperatura de Conservación</span>
                   <select
@@ -1061,7 +1064,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
           {/* --- Fechas Críticas --- */}
           <section>
             <h3 className={seccionCls}>Fechas Críticas</h3>
-            <div className="mt-3 grid grid-cols-3 gap-4">
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
               <label className="flex flex-col">
                 <span className={labelCls}>Fecha de Elaboración</span>
                 <input type="date" className={inputCls} value={form.fecha_elaboracion} onChange={(e) => set("fecha_elaboracion", e.target.value)} />
@@ -1080,7 +1083,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
           {/* --- Costos y Estructura Financiera --- */}
           <section>
             <h3 className={seccionCls}>Costos y Finanzas</h3>
-            <div className="mt-3 grid grid-cols-3 gap-4">
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <label className="flex flex-col">
                 <span className={labelCls}>Costo USD</span>
                 <input type="number" step="0.01" min="0" className={inputCls} value={form.costo_usd} onChange={(e) => set("costo_usd", e.target.value)} placeholder="0.00" />
@@ -1157,8 +1160,8 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
                 />
               </div>
 
-              <div className="flex flex-col col-span-3">
-                <span className={labelCls}>Foto del Producto (Ficha Final)</span>
+              <div className="flex flex-col col-span-1 sm:col-span-2 lg:col-span-3">
+                <span className={labelCls}>Foto del Producto (Opcional)</span>
                 <div className="flex flex-col sm:flex-row items-center gap-4 mt-1 bg-slate-50/50 border border-slate-200 rounded-xl p-3">
                   <div className="w-16 h-16 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
                     {form.foto_url ? (
@@ -1226,7 +1229,7 @@ export default function FichaProducto({ productoEditar, onGuardado, onCancelar }
                 </div>
               </div>
 
-              <div className="flex items-center mt-6 col-span-3">
+              <div className="flex items-center mt-6 col-span-1 sm:col-span-2 lg:col-span-3">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input type="checkbox" checked={form.aplica_iva} onChange={(e) => set("aplica_iva", e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 border-slate-300" />
                   <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Aplica cobro de IVA (16%)</span>

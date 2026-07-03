@@ -22,6 +22,8 @@ class CuentaTesoreria(Base):
     numero_referencia: Mapped[str | None] = mapped_column(String(60), nullable=True)
     saldo_actual: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(20), default="activa")
+    saldo_cargado_por: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    saldo_fecha: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 

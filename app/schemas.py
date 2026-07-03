@@ -1,6 +1,7 @@
 import datetime
+import re
 from decimal import Decimal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Dict, List, Optional
 from app.core.negocio_config import TipoNegocio
 from app.core.ticket_config import TicketTamanoPapel
@@ -219,6 +220,14 @@ class ProductoBase(BaseModel):
     factor_merma: Optional[Decimal] = None
     peso: Optional[Decimal] = None
     foto_url: Optional[str] = None
+    proveedor: Optional[str] = None
+    numero_lote: Optional[str] = None
+
+    @field_validator("nombre", "marca", "proveedor", mode="before")
+    def clean_and_title_case(cls, v):
+        if isinstance(v, str) and v.strip():
+            return " ".join(v.split()).title()
+        return v
 
 # Molde de entrada para registrar un Producto
 class ProductoCreate(ProductoBase):
@@ -251,6 +260,8 @@ class ProductoUpdate(BaseModel):
     factor_merma: Optional[Decimal] = None
     peso: Optional[Decimal] = None
     foto_url: Optional[str] = None
+    proveedor: Optional[str] = None
+    numero_lote: Optional[str] = None
     status: Optional[bool] = None
 
 # Molde de salida con los datos completos del Producto
@@ -502,12 +513,44 @@ class UsuarioCreate(BaseModel):
     rol: str
     status: bool = True
 
+    @field_validator("password")
+    @classmethod
+    def validar_password_fuerte(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("La contraseña debe tener al menos 8 caracteres de longitud.")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("La contraseña debe contener al menos una letra mayúscula.")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("La contraseña debe contener al menos una letra minúscula.")
+        if not re.search(r"\d", v):
+            raise ValueError("La contraseña debe contener al menos un número.")
+        if not re.search(r"[@$!%*?&#\.\_\-\+\=]", v):
+            raise ValueError("La contraseña debe contener al menos un carácter especial (ej. @, $, !, %, *, ?, &, #, ., _, -, +, =).")
+        return v
+
 class UsuarioUpdate(BaseModel):
     nombre: Optional[str] = None
     email: Optional[str] = None
     password: Optional[str] = None
     rol: Optional[str] = None
     status: Optional[bool] = None
+
+    @field_validator("password")
+    @classmethod
+    def validar_password_opcional_fuerte(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if len(v) < 8:
+            raise ValueError("La contraseña debe tener al menos 8 caracteres de longitud.")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("La contraseña debe contener al menos una letra mayúscula.")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("La contraseña debe contener al menos una letra minúscula.")
+        if not re.search(r"\d", v):
+            raise ValueError("La contraseña debe contener al menos un número.")
+        if not re.search(r"[@$!%*?&#\.\_\-\+\=]", v):
+            raise ValueError("La contraseña debe contener al menos un carácter especial (ej. @, $, !, %, *, ?, &, #, ., _, -, +, =).")
+        return v
 
 class UsuarioResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -636,7 +679,13 @@ class CuentaTesoreriaResponse(BaseModel):
     numero_referencia: Optional[str] = None
     saldo_actual: Decimal
     status: str
+    saldo_cargado_por: Optional[str] = None
+    saldo_fecha: Optional[datetime.datetime] = None
     created_at: datetime.datetime
+
+class CuentaTesoreriaUpdateSaldo(BaseModel):
+    saldo_nuevo: Decimal
+    concepto: str = "Ajuste de saldo"
 
 class MovimientoTesoreriaCreate(BaseModel):
     cuenta_id: int
@@ -662,10 +711,15 @@ class SaldoPorCuentaItem(BaseModel):
     moneda: str
     saldo_actual: Decimal
     saldo_usd_equivalente: Decimal
+    saldo_eur_equivalente: Decimal = Decimal("0")
+    saldo_cargado_por: Optional[str] = None
+    saldo_fecha: Optional[datetime.datetime] = None
 
 class ResumenTesoreriaResponse(BaseModel):
     saldo_total_usd_equivalente: Decimal
+    saldo_total_eur_equivalente: Decimal = Decimal("0")
     tasa_bcv: Decimal
+    tasa_eur: Decimal = Decimal("0")
     cuentas: List[SaldoPorCuentaItem]
 
 # --- Esquemas para Cartera y Créditos (CxC / CxP) ---
@@ -1456,4 +1510,22 @@ class SaasPagoResponse(BaseModel):
     comprobante: Optional[str] = None
     fecha: str
     created_at: datetime.datetime
+
+# --- Esquemas para la Sincronización Offline-First en Bloque ---
+class ItemSincronizacion(BaseModel):
+    id_local: str
+    entidad: str  # 'ticket', 'cliente', 'visita'
+    datos_json: str
+
+class SincronizacionLoteRequest(BaseModel):
+    items: List[ItemSincronizacion]
+
+class SincronizacionResultado(BaseModel):
+    id_local: str
+    sincronizado: bool
+    id_remoto: Optional[int] = None
+    error: Optional[str] = None
+
+class SincronizacionLoteResponse(BaseModel):
+    resultados: List[SincronizacionResultado]
 

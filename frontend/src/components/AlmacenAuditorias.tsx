@@ -20,6 +20,12 @@ interface Auditoria {
 
 interface Producto { id: number; linea: string | null; }
 
+const BASE_LINEAS = [
+  "Carnicería","Charcutería","Verdulería y Frutas","Víveres","Bebidas",
+  "Lácteos y Derivados","Limpieza y Hogar","Cuidado Personal","Panadería y Dulces",
+  "Ferretería","Otros",
+];
+
 const inputCls = "rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 const fmtKg = (n: number | string) => Number(n).toLocaleString("es-VE", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 
@@ -42,9 +48,10 @@ export default function AlmacenAuditorias() {
       }
     }).catch(() => {});
     apiClient.get<Producto[]>("/api/v1/productos").then((res) => {
-      const unicas = Array.from(new Set(res.data.map((p) => p.linea).filter((l): l is string => Boolean(l))));
-      setLineas(unicas);
-    }).catch(() => {});
+      const desdeProductos = res.data.map((p) => p.linea).filter((l): l is string => Boolean(l));
+      const merged = Array.from(new Set([...BASE_LINEAS, ...desdeProductos])).sort();
+      setLineas(merged);
+    }).catch(() => { setLineas([...BASE_LINEAS]); });
   }
 
   useEffect(() => { cargarHistorial(); }, []);

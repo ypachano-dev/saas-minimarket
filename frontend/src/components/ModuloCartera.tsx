@@ -5,6 +5,88 @@ import AgentPanel from "./AgentPanel";
 interface Cliente { id: number; nombre: string; cedula: string; limite_credito: number; }
 interface Proveedor { id: number; nombre: string; rif: string; }
 
+// Mini-form inline para crear proveedor rápido
+function QuickAddProveedor({ onCreado }: { onCreado: (p: Proveedor) => void }) {
+  const [open, setOpen] = useState(false);
+  const [nombre, setNombre] = useState("");
+  const [rif, setRif] = useState("");
+  const [err, setErr] = useState("");
+
+  async function guardar(e: FormEvent) {
+    e.preventDefault();
+    setErr("");
+    if (!nombre.trim()) { setErr("El nombre es obligatorio."); return; }
+    try {
+      const res = await apiClient.post<Proveedor>("/api/v1/proveedores", { nombre: nombre.trim(), rif: rif.trim() || "S/R" });
+      onCreado(res.data);
+      setNombre(""); setRif(""); setOpen(false);
+    } catch (ex: any) {
+      setErr(ex.response?.data?.detail ?? "No se pudo crear el proveedor.");
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="mt-1 text-xs text-blue-600 hover:underline font-semibold">
+        + Crear proveedor rápido
+      </button>
+    );
+  }
+  return (
+    <div className="mt-2 p-3 bg-blue-50 border border-blue-100 rounded-xl space-y-2">
+      <p className="text-xs font-bold text-blue-700">Nuevo Proveedor</p>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre *" />
+      <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm" value={rif} onChange={(e) => setRif(e.target.value)} placeholder="RIF (opcional)" />
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setOpen(false)} className="flex-1 text-xs bg-white border border-slate-200 rounded-lg py-1.5 font-semibold">Cancelar</button>
+        <button type="button" onClick={guardar} className="flex-1 text-xs bg-blue-600 text-white rounded-lg py-1.5 font-semibold">Guardar</button>
+      </div>
+    </div>
+  );
+}
+
+// Mini-form inline para crear cliente rápido
+function QuickAddCliente({ onCreado }: { onCreado: (c: Cliente) => void }) {
+  const [open, setOpen] = useState(false);
+  const [nombre, setNombre] = useState("");
+  const [cedula, setCedula] = useState("");
+  const [err, setErr] = useState("");
+
+  async function guardar(e: FormEvent) {
+    e.preventDefault();
+    setErr("");
+    if (!nombre.trim()) { setErr("El nombre es obligatorio."); return; }
+    try {
+      const res = await apiClient.post<Cliente>("/api/v1/clientes", { nombre: nombre.trim(), cedula: cedula.trim() || "S/C", limite_credito: 0 });
+      onCreado(res.data);
+      setNombre(""); setCedula(""); setOpen(false);
+    } catch (ex: any) {
+      setErr(ex.response?.data?.detail ?? "No se pudo crear el cliente.");
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="mt-1 text-xs text-blue-600 hover:underline font-semibold">
+        + Crear cliente rápido
+      </button>
+    );
+  }
+  return (
+    <div className="mt-2 p-3 bg-blue-50 border border-blue-100 rounded-xl space-y-2">
+      <p className="text-xs font-bold text-blue-700">Nuevo Cliente</p>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre *" />
+      <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm" value={cedula} onChange={(e) => setCedula(e.target.value)} placeholder="Cédula (opcional)" />
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setOpen(false)} className="flex-1 text-xs bg-white border border-slate-200 rounded-lg py-1.5 font-semibold">Cancelar</button>
+        <button type="button" onClick={guardar} className="flex-1 text-xs bg-blue-600 text-white rounded-lg py-1.5 font-semibold">Guardar</button>
+      </div>
+    </div>
+  );
+}
+
 interface CxC {
   id: number; cliente_id: number; cliente_nombre: string;
   monto_total: number; monto_abonado: number; saldo: number;
@@ -192,15 +274,18 @@ export default function ModuloCartera() {
 
           {mostrarForm && tab === "cxc" && (
             <form onSubmit={crearCxc} className="grid grid-cols-2 gap-3 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-              <label className="flex flex-col col-span-2">
-                <span className={labelCls}>Cliente</span>
-                <select className={inputCls} value={formCxc.cliente_id} onChange={(e) => setFormCxc((p) => ({ ...p, cliente_id: e.target.value }))}>
-                  <option value="">Seleccionar...</option>
-                  {clientes.map((c) => (
-                    <option key={c.id} value={c.id}>{c.nombre} ({c.cedula}) {c.limite_credito > 0 ? `· Límite: $${fmt(c.limite_credito)}` : ""}</option>
-                  ))}
-                </select>
-              </label>
+              <div className="flex flex-col col-span-2">
+                <label className="flex flex-col">
+                  <span className={labelCls}>Cliente</span>
+                  <select className={inputCls} value={formCxc.cliente_id} onChange={(e) => setFormCxc((p) => ({ ...p, cliente_id: e.target.value }))}>
+                    <option value="">Seleccionar...</option>
+                    {clientes.map((c) => (
+                      <option key={c.id} value={c.id}>{c.nombre} ({c.cedula}) {c.limite_credito > 0 ? `· Límite: $${fmt(c.limite_credito)}` : ""}</option>
+                    ))}
+                  </select>
+                </label>
+                <QuickAddCliente onCreado={(c) => { setClientes((prev) => [...prev, c]); setFormCxc((p) => ({ ...p, cliente_id: String(c.id) })); }} />
+              </div>
               <label className="flex flex-col">
                 <span className={labelCls}>Monto ($)</span>
                 <input type="number" step="0.01" className={inputCls} value={formCxc.monto_total} onChange={(e) => setFormCxc((p) => ({ ...p, monto_total: e.target.value }))} placeholder="0.00" />
@@ -221,15 +306,18 @@ export default function ModuloCartera() {
 
           {mostrarForm && tab === "cxp" && (
             <form onSubmit={crearCxp} className="grid grid-cols-2 gap-3 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-              <label className="flex flex-col col-span-2">
-                <span className={labelCls}>Proveedor</span>
-                <select className={inputCls} value={formCxp.proveedor_id} onChange={(e) => setFormCxp((p) => ({ ...p, proveedor_id: e.target.value }))}>
-                  <option value="">Seleccionar...</option>
-                  {proveedores.map((p) => (
-                    <option key={p.id} value={p.id}>{p.nombre} ({p.rif})</option>
-                  ))}
-                </select>
-              </label>
+              <div className="flex flex-col col-span-2">
+                <label className="flex flex-col">
+                  <span className={labelCls}>Proveedor</span>
+                  <select className={inputCls} value={formCxp.proveedor_id} onChange={(e) => setFormCxp((p) => ({ ...p, proveedor_id: e.target.value }))}>
+                    <option value="">Seleccionar...</option>
+                    {proveedores.map((p) => (
+                      <option key={p.id} value={p.id}>{p.nombre} ({p.rif})</option>
+                    ))}
+                  </select>
+                </label>
+                <QuickAddProveedor onCreado={(p) => { setProveedores((prev) => [...prev, p]); setFormCxp((f) => ({ ...f, proveedor_id: String(p.id) })); }} />
+              </div>
               <label className="flex flex-col">
                 <span className={labelCls}>Monto ($)</span>
                 <input type="number" step="0.01" className={inputCls} value={formCxp.monto_total} onChange={(e) => setFormCxp((p) => ({ ...p, monto_total: e.target.value }))} placeholder="0.00" />

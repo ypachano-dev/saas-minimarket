@@ -32,7 +32,7 @@ class ConfigNegocio(TypedDict):
 NEGOCIO_CONFIG: dict[TipoNegocio, ConfigNegocio] = {
     TipoNegocio.MINIMARKET: {
         "nomenclatura": {
-            "suite": "MiniMarket Suite",
+            "suite": "3Q Nexus · MiniMarket",
             "inventario": "Productos",
             "item_inventario": "Producto",
             "venta": "Venta",
@@ -44,7 +44,7 @@ NEGOCIO_CONFIG: dict[TipoNegocio, ConfigNegocio] = {
     },
     TipoNegocio.FERRETERIA: {
         "nomenclatura": {
-            "suite": "Ferretería Suite",
+            "suite": "3Q Nexus · Ferretería",
             "inventario": "Herramientas y Materiales",
             "item_inventario": "Artículo",
             "venta": "Despacho",
@@ -56,7 +56,7 @@ NEGOCIO_CONFIG: dict[TipoNegocio, ConfigNegocio] = {
     },
     TipoNegocio.AGROPECUARIA: {
         "nomenclatura": {
-            "suite": "Agropecuaria Suite",
+            "suite": "3Q Nexus · Agropecuaria",
             "inventario": "Insumos Agropecuarios",
             "item_inventario": "Insumo",
             "venta": "Despacho de Campo",
@@ -67,7 +67,7 @@ NEGOCIO_CONFIG: dict[TipoNegocio, ConfigNegocio] = {
     },
     TipoNegocio.FERREAGROPECUARIA: {
         "nomenclatura": {
-            "suite": "Agroferretería Suite",
+            "suite": "3Q Nexus · Agroferretería",
             "inventario": "Insumos y Ferretería",
             "item_inventario": "Artículo",
             "venta": "Despacho",

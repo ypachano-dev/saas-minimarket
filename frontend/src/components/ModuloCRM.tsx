@@ -615,18 +615,25 @@ export default function ModuloCRM() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-[2fr_2fr_auto] gap-2">
-                  <select
-                    className={inputCls}
-                    value={productoSel}
-                    onChange={(e) => setProductoSel(e.target.value ? Number(e.target.value) : "")}
-                    title="Producto a ofertar"
-                    aria-label="Producto a ofertar"
-                  >
-                    <option value="">Selecciona un producto...</option>
-                    {productosDisponibles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.nombre} {p.linea ? `(${p.linea})` : ""}</option>
-                    ))}
-                  </select>
+                  <div className="flex flex-col">
+                    <select
+                      className={inputCls}
+                      value={productoSel}
+                      onChange={(e) => setProductoSel(e.target.value ? Number(e.target.value) : "")}
+                      title="Producto a ofertar"
+                      aria-label="Producto a ofertar"
+                    >
+                      <option value="">Selecciona un producto...</option>
+                      {productosDisponibles.map((p) => (
+                        <option key={p.id} value={p.id}>{p.nombre} {p.linea ? `(${p.linea})` : ""}</option>
+                      ))}
+                    </select>
+                    {productosDisponibles.length === 0 && (
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        ¿No aparece el producto? Ve a <strong className="text-slate-600">Catálogo → Ficha de Producto</strong> para registrarlo primero.
+                      </p>
+                    )}
+                  </div>
                   <input
                     type="text"
                     className={inputCls}

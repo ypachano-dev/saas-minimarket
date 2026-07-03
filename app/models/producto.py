@@ -16,6 +16,8 @@ class Producto(Base):
     nombre: Mapped[str] = mapped_column(String(150), nullable=False)
     caracteristicas: Mapped[str | None] = mapped_column(Text, nullable=True) # Descripción o componentes
     marca: Mapped[str | None] = mapped_column(String(100), nullable=True) # Ej. Over, Nutrimax, Pepsi
+    proveedor: Mapped[str | None] = mapped_column(String(150), nullable=True) # Proveedor
+    numero_lote: Mapped[str | None] = mapped_column(String(50), nullable=True) # Lote del producto
     linea: Mapped[str | None] = mapped_column(String(100), nullable=True) # Línea crítica de negocio
     clase_o_tipo: Mapped[str | None] = mapped_column(String(100), nullable=True) # Subclasificación operativa
     

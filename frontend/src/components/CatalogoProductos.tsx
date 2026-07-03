@@ -12,6 +12,11 @@ interface Producto {
   proveedor: string | null;
   foto_url: string | null;
   stock_minimo: number;
+  marca?: string | null;
+  ubicacion?: string | null;
+  numero_lote?: string | null;
+  fecha_ingreso_stock?: string | null;
+  fecha_vencimiento?: string | null;
 }
 
 export default function CatalogoProductos({ tasaBcv }: { tasaBcv: number }) {
@@ -156,30 +161,51 @@ export default function CatalogoProductos({ tasaBcv }: { tasaBcv: number }) {
           {productosFiltrados.map((p) => {
             const esBajoStock = p.stock_total <= p.stock_minimo;
             const tieneStock = p.stock_total > 0;
+            
+            const isExpiringSoon = () => {
+              if (!p.fecha_vencimiento) return false;
+              const today = new Date();
+              const expDate = new Date(p.fecha_vencimiento);
+              const diffTime = expDate.getTime() - today.getTime();
+              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              return diffDays <= 15 && diffDays >= 0;
+            };
+            
+            const isExpired = () => {
+              if (!p.fecha_vencimiento) return false;
+              return new Date(p.fecha_vencimiento) < new Date();
+            };
+
+            const alertVencimiento = isExpired() 
+              ? { class: "bg-red-100 text-red-700 border-red-200", text: "Vencido" }
+              : isExpiringSoon() 
+                ? { class: "bg-orange-100 text-orange-700 border-orange-200", text: "Por Vencer" }
+                : null;
+
             return (
               <div
                 key={p.id}
-                className="rounded-3xl border border-slate-150/60 bg-white overflow-hidden shadow-sm flex flex-col justify-between hover:shadow-xl hover:border-slate-200/60 transition-all duration-300 relative group"
+                className="group relative flex flex-col w-full rounded-[24px] bg-white border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden font-sans"
               >
-                {/* Stock badge */}
-                <span
-                  className={`absolute left-3 top-3 z-10 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase text-white shadow-md border tracking-wider ${
-                    !tieneStock
-                      ? "bg-rose-500 border-rose-400"
-                      : esBajoStock
-                      ? "bg-amber-500 border-amber-400 animate-pulse"
-                      : "bg-slate-900/90 border-white/10"
-                  }`}
-                >
-                  {!tieneStock
-                    ? "Sin Stock"
-                    : esBajoStock
-                    ? `Crítico: ${fmt(p.stock_total)}`
-                    : `Stock: ${fmt(p.stock_total)}`}
-                </span>
+                {/* Badge de Stock Flotante */}
+                <div className="absolute top-3 right-3 z-10 flex flex-col items-end gap-2">
+                  <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full shadow-sm backdrop-blur-md bg-white/90 border ${tieneStock ? (esBajoStock ? 'text-amber-600 border-amber-200 animate-pulse' : 'text-emerald-600 border-emerald-100') : 'text-rose-500 border-rose-100'}`}>
+                    {!tieneStock ? "Agotado" : esBajoStock ? `Crítico: ${fmt(p.stock_total)}` : `${fmt(p.stock_total)} Disp.`}
+                  </span>
+                  
+                  {/* Alerta de Lote (Vencimiento) */}
+                  {alertVencimiento && (
+                    <span className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-wider rounded-full shadow-sm border ${alertVencimiento.class} flex items-center gap-1`}>
+                      <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      {alertVencimiento.text}
+                    </span>
+                  )}
+                </div>
 
-                {/* Photo container */}
-                <div className="h-44 w-full bg-slate-50 relative overflow-hidden">
+                {/* Imagen del Producto */}
+                <div className="relative h-44 w-full bg-slate-50 flex items-center justify-center overflow-hidden">
                   <img
                     src={p.foto_url || defaultImage}
                     alt={p.nombre}
@@ -188,32 +214,80 @@ export default function CatalogoProductos({ tasaBcv }: { tasaBcv: number }) {
                       (e.target as HTMLImageElement).src = defaultImage;
                     }}
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/20 to-transparent" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/10 to-transparent" />
                 </div>
 
-                {/* Details */}
-                <div className="p-4 flex-1 flex flex-col justify-between space-y-4">
-                  <div className="space-y-1">
+                {/* Cuerpo de la Tarjeta */}
+                <div className="flex flex-col flex-grow p-4 space-y-3">
+                  {/* Categoría, Nombre, Marca y Proveedor */}
+                  <div>
                     <span className="text-[9px] font-black uppercase tracking-wider text-violet-650">
                       {p.linea || "General"}
                     </span>
-                    <h4 className="text-sm font-bold text-slate-800 leading-snug line-clamp-2 h-10 group-hover:text-slate-955 transition-colors">
+                    <h3 className="text-sm font-bold text-slate-800 leading-snug line-clamp-2 h-10 group-hover:text-slate-955 transition-colors mt-1">
                       {p.nombre}
-                    </h4>
-                    <p className="text-[9px] font-mono text-slate-400 font-medium">
-                      SKU: {p.codigo_interno} {p.codigo_barras ? `· GTIN: ${p.codigo_barras}` : ""}
-                    </p>
+                    </h3>
+                    <div className="mt-1 flex items-center gap-1.5 text-[10px] font-semibold text-slate-400 truncate">
+                      {p.marca && (
+                        <span className="flex items-center gap-1">
+                          <span className="w-1 h-1 rounded-full bg-blue-400"></span>
+                          {p.marca}
+                        </span>
+                      )}
+                      {p.marca && p.proveedor && <span>•</span>}
+                      {p.proveedor && (
+                        <span className="text-slate-500 truncate">{p.proveedor}</span>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Multi-currency pricing matrix */}
-                  <div className="bg-slate-50/50 hover:bg-slate-50 p-3 rounded-2xl border border-slate-100/60 flex justify-between items-center font-mono relative overflow-hidden transition-all duration-300">
-                    <div>
-                      <p className="text-[9px] font-bold uppercase text-slate-400 leading-none">Divisas</p>
-                      <p className="text-base font-black text-slate-800 mt-1">${fmt(Number(p.precio_1_detalle))}</p>
+                  {/* Detalles de Logística (Lote, Fechas, Ubicación) */}
+                  <div className="grid grid-cols-2 gap-2 p-2.5 bg-slate-50/80 rounded-xl border border-slate-100 text-[10px] font-medium text-slate-500">
+                    {p.ubicacion && (
+                      <div className="col-span-2 flex items-center gap-1 pb-1.5 border-b border-slate-200">
+                        <svg className="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Ubicación: <span className="font-bold text-slate-700 truncate">{p.ubicacion}</span>
+                      </div>
+                    )}
+                    
+                    <div className="flex flex-col mt-1">
+                      <span className="text-slate-400 uppercase text-[8px] tracking-wider font-bold">Lote / Ingreso</span>
+                      <span className="text-slate-700 truncate">{p.numero_lote || 'N/A'}</span>
+                      <span className="text-slate-400">{p.fecha_ingreso_stock || '--'}</span>
                     </div>
-                    <div className="text-right">
-                      <p className="text-[9px] font-bold uppercase text-slate-400 leading-none">Bolívares</p>
-                      <p className="text-xs font-black text-emerald-600 mt-1">Bs. {fmt(Number(p.precio_1_detalle) * tasaBcv)}</p>
+                    
+                    <div className="flex flex-col mt-1">
+                      <span className="text-slate-400 uppercase text-[8px] tracking-wider font-bold">Vencimiento</span>
+                      <span className={`font-bold ${isExpired() ? 'text-red-600' : isExpiringSoon() ? 'text-orange-600' : 'text-slate-700'}`}>
+                        {p.fecha_vencimiento || 'No perecedero'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex-grow"></div>
+
+                  {/* Multi-currency pricing matrix */}
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                    <div className="flex flex-col">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Precio Total</span>
+                      <div className="flex items-baseline gap-0.5">
+                        <span className="text-xs font-bold text-emerald-600">$</span>
+                        <span className="text-lg font-black text-slate-800 tracking-tight">
+                          {fmt(Number(p.precio_1_detalle))}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col items-end text-right">
+                      <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">Equivalente</span>
+                      <div className="px-2 py-0.5 bg-blue-50 rounded-md border border-blue-100 mt-0.5">
+                        <span className="text-xs font-black text-blue-700">
+                          Bs. {fmt(Number(p.precio_1_detalle) * tasaBcv)}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>

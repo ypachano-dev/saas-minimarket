@@ -38,26 +38,56 @@ interface OrdenAgente {
     estatus: "Pendiente" | "Recibido";
 }
 
-const INVENTARIO_COMPLETO: ProductoBase[] = [
-    { id: "P001", nombre: "Harina PAN 1kg", proveedor: "Distribuidora Polar", stock_actual: 15, ventas_mensuales: 360, costo_anterior: 1.05, costo_actual: 1.12, fecha_vencimiento: "2026-12-15" },
-    { id: "P002", nombre: "Aceite Vatel 1L", proveedor: "Vatel C.A.", stock_actual: 5, ventas_mensuales: 90, costo_anterior: 3.40, costo_actual: 3.10, fecha_vencimiento: "2027-02-20" },
-    { id: "P003", nombre: "Arroz Primor 1kg", proveedor: "Alimentos Mary", stock_actual: 80, ventas_mensuales: 150, costo_anterior: 1.95, costo_actual: 1.95, fecha_vencimiento: "2026-06-25" },
-    { id: "P004", nombre: "Pasta Primor 500g", proveedor: "Alimentos Mary", stock_actual: 10, ventas_mensuales: 210, costo_anterior: 1.20, costo_actual: 1.35, fecha_vencimiento: "2026-11-05" },
-    { id: "P005", nombre: "Margarina Mavesa 500g", proveedor: "Distribuidora Polar", stock_actual: 45, ventas_mensuales: 180, costo_anterior: 1.50, costo_actual: 1.50, fecha_vencimiento: "2026-10-10" },
-];
+interface ProveedorApi { id: number; nombre: string; rif: string; }
+interface ProductoApi { id: number; nombre: string; proveedor: string | null; stock_total: number; costo_usd: number | null; }
 
-const LISTA_PROVEEDORES = ["Distribuidora Polar", "Alimentos Mary", "Vatel C.A."];
-const ORDENES_INICIALES: OrdenAgente[] = [
-    { id: "OC-001", proveedor: "Distribuidora Polar", fecha: "2026-06-12", items_count: 2, total_usd: 180.00, origen: "Manual", estatus: "Pendiente" }
-];
+// Widget inline para crear proveedor rápido
+function QuickAddProveedorPedidos({ onCreado }: { onCreado: (p: ProveedorApi) => void }) {
+    const [open, setOpen] = useState(false);
+    const [nombre, setNombre] = useState("");
+    const [rif, setRif] = useState("");
+    const [err, setErr] = useState("");
+
+    async function guardar() {
+        setErr("");
+        if (!nombre.trim()) { setErr("Nombre obligatorio."); return; }
+        try {
+            const res = await apiClient.post<ProveedorApi>("/api/v1/proveedores", { nombre: nombre.trim(), rif: rif.trim() || "S/R" });
+            onCreado(res.data);
+            setNombre(""); setRif(""); setOpen(false);
+        } catch (ex: any) {
+            setErr(ex.response?.data?.detail ?? "Error al crear.");
+        }
+    }
+
+    if (!open) return (
+        <button type="button" onClick={() => setOpen(true)} className="mt-1 text-xs text-blue-600 hover:underline font-semibold">
+            + Crear proveedor rápido
+        </button>
+    );
+    return (
+        <div className="mt-2 p-3 bg-blue-50 border border-blue-100 rounded-xl space-y-2">
+            <p className="text-xs font-bold text-blue-700">Nuevo Proveedor</p>
+            {err && <p className="text-xs text-rose-600">{err}</p>}
+            <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre *" />
+            <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm" value={rif} onChange={(e) => setRif(e.target.value)} placeholder="RIF (opcional)" />
+            <div className="flex gap-2">
+                <button type="button" onClick={() => setOpen(false)} className="flex-1 text-xs bg-white border border-slate-200 rounded-lg py-1.5 font-semibold">Cancelar</button>
+                <button type="button" onClick={guardar} className="flex-1 text-xs bg-blue-600 text-white rounded-lg py-1.5 font-semibold">Guardar</button>
+            </div>
+        </div>
+    );
+}
 
 const fmt = (n: number) => n.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function ModuloPedidos() {
     const [tab, setTab] = useState<"opcion1_proveedor" | "ordenes">("opcion1_proveedor");
-    const [ordenes, setOrdenes] = useState<OrdenAgente[]>(ORDENES_INICIALES);
+    const [ordenes, setOrdenes] = useState<OrdenAgente[]>([]);
 
-    const [provSeleccionado, setProvSeleccionado] = useState(LISTA_PROVEEDORES[0]);
+    const [proveedoresApi, setProveedoresApi] = useState<ProveedorApi[]>([]);
+    const [productosApi, setProductosApi] = useState<ProductoApi[]>([]);
+    const [provSeleccionado, setProvSeleccionado] = useState("");
     const [coberturaSeleccionada, setCoberturaSeleccionada] = useState<string>("30");
     const [diasPersonalizados, setDiasPersonalizados] = useState<string>("45");
     const [msg, setMsg] = useState<string | null>(null);
@@ -82,19 +112,39 @@ export default function ModuloPedidos() {
             .catch(() => {});
     }
 
+    function cargarProveedoresYProductos() {
+        apiClient.get<ProveedorApi[]>("/api/v1/proveedores").then((res) => {
+            setProveedoresApi(res.data);
+            if (res.data.length > 0 && !provSeleccionado) setProvSeleccionado(res.data[0].nombre);
+        }).catch(() => {});
+        apiClient.get<ProductoApi[]>("/api/v1/productos").then((res) => setProductosApi(res.data)).catch(() => {});
+    }
+
     useEffect(() => {
         cargarOrdenes();
+        cargarProveedoresYProductos();
     }, []);
 
     useEffect(() => {
-        const itemsIniciales = INVENTARIO_COMPLETO.filter(p => p.proveedor === provSeleccionado).map(p => ({
-            ...p,
+        // Productos que tienen este proveedor registrado, o todos si no hay filtro
+        const productosFiltrados = provSeleccionado
+            ? productosApi.filter(p => p.proveedor === provSeleccionado)
+            : [];
+        const itemsIniciales: ItemBorrador[] = productosFiltrados.map(p => ({
+            id: String(p.id),
+            nombre: p.nombre,
+            proveedor: p.proveedor ?? provSeleccionado,
+            stock_actual: p.stock_total ?? 0,
+            ventas_mensuales: 0,
+            costo_anterior: 0,
+            costo_actual: Number(p.costo_usd ?? 0),
+            fecha_vencimiento: "",
             cantidadManual: 0,
-            estadoRevision: "Pendiente" as const
+            estadoRevision: "Pendiente" as const,
         }));
         setBorradorItems(itemsIniciales);
         setBotAnalizado(false);
-    }, [provSeleccionado]);
+    }, [provSeleccionado, productosApi]);
 
     function getDiasEfectivos(): number {
         return coberturaSeleccionada === "custom" ? Number(diasPersonalizados || 0) : Number(coberturaSeleccionada);
@@ -245,12 +295,19 @@ export default function ModuloPedidos() {
             {tab === "opcion1_proveedor" && (
                 <div className="space-y-6">
                     <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm grid grid-cols-4 gap-4 items-end">
-                        <label className="flex flex-col">
-                            <span className="text-xs font-black uppercase tracking-wider text-slate-400 mb-1">1. Seleccionar Proveedor</span>
-                            <select value={provSeleccionado} onChange={(e) => setProvSeleccionado(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                {LISTA_PROVEEDORES.map(p => <option key={p} value={p}>{p}</option>)}
-                            </select>
-                        </label>
+                        <div className="flex flex-col">
+                            <label className="flex flex-col">
+                                <span className="text-xs font-black uppercase tracking-wider text-slate-400 mb-1">1. Seleccionar Proveedor</span>
+                                <select value={provSeleccionado} onChange={(e) => setProvSeleccionado(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="">— Seleccionar —</option>
+                                    {proveedoresApi.map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+                                </select>
+                            </label>
+                            <QuickAddProveedorPedidos onCreado={(p) => {
+                                setProveedoresApi(prev => [...prev, p]);
+                                setProvSeleccionado(p.nombre);
+                            }} />
+                        </div>
                         <label className="flex flex-col">
                             <span className="text-xs font-black uppercase tracking-wider text-slate-400 mb-1">2. Tiempo de Cobertura</span>
                             <select value={coberturaSeleccionada} onChange={(e) => setCoberturaSeleccionada(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500">

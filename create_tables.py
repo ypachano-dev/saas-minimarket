@@ -32,6 +32,7 @@ from app.models.visita import VisitaCliente, EncuestaMarketing, EncuestaInventar
 from app.models.orden_venta import OrdenVenta, OrdenVentaItem
 from app.models.ruta import RutaVendedor, RutaActividad
 from app.models.renglon_gasto import RenglonGasto, PagoRenglon
+from app.models.sincronizacion import ColaSincronizacion
 
 def crear_estructura_SaaS():
     print("Conectando con base de datos e iniciando creacion de tablas...")
@@ -39,7 +40,7 @@ def crear_estructura_SaaS():
         # Lee la Metadata de Base y crea las tablas físicas en el orden relacional correcto
         Base.metadata.create_all(bind=engine)
         print("Las tablas se crearon con exito en tu base de datos local.")
-        print("Tablas listas: Empresa, Usuario, Cliente, Producto, Ticket, Lote, Merma, TasaCambio, PeticionFaltante, SeguimientoBot, Proveedor, Vehiculo, PedidoDelivery, OrdenCompra, VisitaCliente, EncuestaMarketing, OrdenVenta, RutaVendedor, RutaActividad.")
+        print("Tablas listas: Empresa, Usuario, Cliente, Producto, Ticket, Lote, Merma, TasaCambio, PeticionFaltante, SeguimientoBot, Proveedor, Vehiculo, PedidoDelivery, OrdenCompra, VisitaCliente, EncuestaMarketing, OrdenVenta, RutaVendedor, RutaActividad, ColaSincronizacion.")
     except Exception as e:
         print(f"Error fatal al intentar mapear las tablas: {e}")
         print("\nGuia de supervivencia rapido:")

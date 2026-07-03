@@ -1,7 +1,10 @@
 import calendar
 import datetime
+import json
 import logging
 import os
+import time
+from collections import defaultdict
 from decimal import Decimal
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from app.core.security import (
@@ -37,7 +40,7 @@ from app.models.proveedor import Proveedor
 from app.models.vehiculo import Vehiculo
 from app.models.pedido_delivery import PedidoDelivery
 from app.models.orden_compra import OrdenCompra, OrdenCompraItem
-from app.models.tesoreria import CuentaTesoreria, MovimientoTesoreria, BANCOS_VALIDOS
+from app.models.tesoreria import CuentaTesoreria, MovimientoTesoreria
 from app.models.cartera import CuentaPorCobrar, CuentaPorPagar, PagoCxc
 from app.models.cobranza import GestionCobranza
 from app.models.desposte import Desposte, DesposteItem, DesposteSolicitud
@@ -47,6 +50,8 @@ from app.models.visita import VisitaCliente, EncuestaMarketing, EncuestaInventar
 from app.models.orden_venta import OrdenVenta, OrdenVentaItem
 from app.models.ruta import RutaVendedor, RutaActividad
 from app.models.renglon_gasto import RenglonGasto, PagoRenglon
+from app.models.sincronizacion import ColaSincronizacion
+from app.schemas import SincronizacionLoteRequest, SincronizacionLoteResponse, SincronizacionResultado
 from app.core.ai_agent import tiene_agente_ia, consultar_agente
 from app.core.negocio_config import TipoNegocio, NEGOCIO_CONFIG, GUIAS_AGENTES_IA, normalizar_tipo_negocio
 from app.core.ticket_config import TicketTamanoPapel, normalizar_tamano_papel
@@ -67,7 +72,8 @@ from app.schemas import (
     ProveedorCreate, ProveedorUpdate, ProveedorResponse, VehiculoCreate, VehiculoUpdate, VehiculoResponse, VehiculoUbicacionUpdate,
     UsuarioCreate, UsuarioUpdate, UsuarioResponse, TicketPesajeCreate, TicketPesoUpdate, ProcesarPagoTickets,
     PedidoDeliveryCreate, PedidoDeliveryResponse, PedidoDeliveryEstadoUpdate, OrdenCompraCreate, OrdenCompraResponse,
-    CuentaTesoreriaCreate, CuentaTesoreriaResponse, MovimientoTesoreriaCreate, MovimientoTesoreriaResponse,
+    CuentaTesoreriaCreate, CuentaTesoreriaResponse, CuentaTesoreriaUpdateSaldo,
+    MovimientoTesoreriaCreate, MovimientoTesoreriaResponse,
     SaldoPorCuentaItem, ResumenTesoreriaResponse,
     CuentaPorCobrarCreate, CuentaPorCobrarResponse, CuentaPorPagarCreate, CuentaPorPagarResponse,
     AbonoCreate, ResumenCarteraResponse,
@@ -125,6 +131,40 @@ app = FastAPI(
     redoc_url=None
 )
 
+# Historial de peticiones en memoria para Rate Limiting (offline friendly)
+historial_peticiones = defaultdict(lambda: defaultdict(list))
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+        
+    client_ip = request.client.host if request.client else "unknown"
+    ahora = time.time()
+    
+    # Límite por defecto: 100 peticiones por minuto
+    limite_peticiones, ventana_segundos = (100, 60)
+    
+    # Límite estricto para el login: 5 peticiones por minuto
+    if path == "/api/v1/auth/login":
+        limite_peticiones, ventana_segundos = (5, 60)
+        
+    # Limpiar registros más antiguos que la ventana de tiempo
+    timestamps = historial_peticiones[client_ip][path]
+    timestamps = [t for t in timestamps if ahora - t < ventana_segundos]
+    
+    if len(timestamps) >= limite_peticiones:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"detail": "Demasiadas peticiones. Por favor, intenta de nuevo más tarde."}
+        )
+        
+    timestamps.append(ahora)
+    historial_peticiones[client_ip][path] = timestamps
+    
+    return await call_next(request)
+
 
 @app.exception_handler(SQLAlchemyError)
 def manejador_error_bd(request: Request, exc: SQLAlchemyError):
@@ -168,6 +208,15 @@ def _crear_indices_defensivos() -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_turno_caja_abierto_unico "
             "ON turnocaja (empresa_id, usuario_id) WHERE estado = 'ABIERTO'"
         ))
+        # Migración incremental: añadir columnas de tracking de saldo si no existen
+        for ddl in [
+            "ALTER TABLE cuenta_tesoreria ADD COLUMN saldo_cargado_por VARCHAR(100)",
+            "ALTER TABLE cuenta_tesoreria ADD COLUMN saldo_fecha DATETIME",
+        ]:
+            try:
+                conn.execute(text(ddl))
+            except Exception:
+                pass  # Columna ya existe
         conn.commit()
 
 # Función puente para abrir y cerrar la base de datos automáticamente
@@ -1912,8 +1961,8 @@ def obtener_tasa(
             actualizar = True
 
     if actualizar:
-        valor_usd = Decimal("602.33")
-        valor_eur = Decimal("650.00")
+        valor_usd = Decimal("652.97")
+        valor_eur = Decimal("747.33")
         import urllib.request, json
 
         try:
@@ -4130,28 +4179,59 @@ def _tasa_bcv_empresa(db: Session, empresa_id: int) -> Decimal:
     tasa = db.query(TasaCambio).filter(TasaCambio.empresa_id == empresa_id).first()
     return tasa.valor_bcv if tasa else Decimal("0")
 
+def _tasa_eur_empresa(db: Session, empresa_id: int) -> Decimal:
+    tasa = db.query(TasaCambio).filter(TasaCambio.empresa_id == empresa_id).first()
+    return (tasa.valor_eur or Decimal("0")) if tasa else Decimal("0")
+
 def _calcular_resumen_tesoreria(db: Session, empresa_id: int) -> ResumenTesoreriaResponse:
-    tasa_bcv = _tasa_bcv_empresa(db, empresa_id)
+    tasa_obj = db.query(TasaCambio).filter(TasaCambio.empresa_id == empresa_id).first()
+    tasa_bcv = tasa_obj.valor_bcv if tasa_obj else Decimal("0")
+    tasa_eur = (tasa_obj.valor_eur or Decimal("0")) if tasa_obj else Decimal("0")
+
     cuentas = db.query(CuentaTesoreria).filter(
         CuentaTesoreria.empresa_id == empresa_id, CuentaTesoreria.status == "activa"
     ).all()
 
     items = []
     total_usd = Decimal("0")
+    total_eur = Decimal("0")
     for c in cuentas:
         if c.moneda == "VES" and tasa_bcv > 0:
-            equivalente = (c.saldo_actual / tasa_bcv).quantize(Decimal("0.01"))
+            eq_usd = (c.saldo_actual / tasa_bcv).quantize(Decimal("0.01"))
         elif c.moneda == "VES":
-            equivalente = Decimal("0")
+            eq_usd = Decimal("0")
+        elif c.moneda == "EUR":
+            # EUR → USD: multiplicar por (tasa_eur / tasa_bcv) si ambas disponibles
+            eq_usd = (c.saldo_actual * tasa_eur / tasa_bcv).quantize(Decimal("0.01")) if tasa_bcv > 0 else c.saldo_actual
         else:
-            equivalente = c.saldo_actual.quantize(Decimal("0.01"))
-        total_usd += equivalente
+            eq_usd = c.saldo_actual.quantize(Decimal("0.01"))
+
+        if c.moneda == "VES" and tasa_eur > 0:
+            eq_eur = (c.saldo_actual / tasa_eur).quantize(Decimal("0.01"))
+        elif c.moneda == "EUR":
+            eq_eur = c.saldo_actual.quantize(Decimal("0.01"))
+        elif c.moneda == "USD" and tasa_eur > 0 and tasa_bcv > 0:
+            eq_eur = (c.saldo_actual * tasa_bcv / tasa_eur).quantize(Decimal("0.01"))
+        else:
+            eq_eur = eq_usd  # fallback
+
+        total_usd += eq_usd
+        total_eur += eq_eur
         items.append(SaldoPorCuentaItem(
             cuenta_id=c.id, banco=c.banco, alias=c.alias, moneda=c.moneda,
-            saldo_actual=c.saldo_actual, saldo_usd_equivalente=equivalente
+            saldo_actual=c.saldo_actual, saldo_usd_equivalente=eq_usd,
+            saldo_eur_equivalente=eq_eur,
+            saldo_cargado_por=c.saldo_cargado_por,
+            saldo_fecha=c.saldo_fecha,
         ))
 
-    return ResumenTesoreriaResponse(saldo_total_usd_equivalente=total_usd, tasa_bcv=tasa_bcv, cuentas=items)
+    return ResumenTesoreriaResponse(
+        saldo_total_usd_equivalente=total_usd,
+        saldo_total_eur_equivalente=total_eur,
+        tasa_bcv=tasa_bcv,
+        tasa_eur=tasa_eur,
+        cuentas=items,
+    )
 
 @app.post("/api/v1/tesoreria/cuentas", tags=["Tesorería"], response_model=CuentaTesoreriaResponse, status_code=status.HTTP_201_CREATED)
 def crear_cuenta_tesoreria(
@@ -4159,16 +4239,22 @@ def crear_cuenta_tesoreria(
     db: Session = Depends(get_db),
     usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
 ):
-    if datos.banco not in BANCOS_VALIDOS:
-        raise HTTPException(status_code=400, detail=f"Banco/medio de pago inválido. Use uno de: {', '.join(BANCOS_VALIDOS)}.")
+    banco_val = datos.banco.strip().upper()[:40]
+    if not banco_val:
+        raise HTTPException(status_code=400, detail="El banco/medio de pago es obligatorio.")
+
+    usuario = db.query(Usuario).filter(Usuario.id == usuario_actual.uid).first()
+    nombre_usuario = usuario.nombre if usuario else "Sistema"
 
     nueva_cuenta = CuentaTesoreria(
         empresa_id=usuario_actual.eid,
-        banco=datos.banco,
+        banco=banco_val,
         alias=datos.alias.strip(),
         moneda=datos.moneda.strip().upper(),
         numero_referencia=datos.numero_referencia.strip() if datos.numero_referencia else None,
-        saldo_actual=datos.saldo_actual
+        saldo_actual=datos.saldo_actual,
+        saldo_cargado_por=nombre_usuario,
+        saldo_fecha=datetime.datetime.now(datetime.timezone.utc),
     )
     try:
         db.add(nueva_cuenta)
@@ -4179,6 +4265,51 @@ def crear_cuenta_tesoreria(
         db.rollback()
         raise HTTPException(status_code=400, detail="Error al registrar la cuenta.")
     return nueva_cuenta
+
+@app.patch("/api/v1/tesoreria/cuentas/{cuenta_id}/saldo", tags=["Tesorería"], response_model=CuentaTesoreriaResponse)
+def ajustar_saldo_cuenta(
+    cuenta_id: int,
+    datos: CuentaTesoreriaUpdateSaldo,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))
+):
+    cuenta = db.query(CuentaTesoreria).filter(
+        CuentaTesoreria.id == cuenta_id,
+        CuentaTesoreria.empresa_id == usuario_actual.eid,
+    ).first()
+    if not cuenta:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada.")
+    if datos.saldo_nuevo < 0:
+        raise HTTPException(status_code=400, detail="El saldo no puede ser negativo.")
+
+    usuario = db.query(Usuario).filter(Usuario.id == usuario_actual.uid).first()
+    nombre_usuario = usuario.nombre if usuario else "Sistema"
+    ahora = datetime.datetime.now(datetime.timezone.utc)
+
+    # Registrar el ajuste como movimiento para auditoría
+    diferencia = datos.saldo_nuevo - cuenta.saldo_actual
+    tipo_mov = "ingreso" if diferencia >= 0 else "egreso"
+    mov = MovimientoTesoreria(
+        empresa_id=usuario_actual.eid,
+        cuenta_id=cuenta.id,
+        usuario_id=usuario_actual.uid,
+        tipo=tipo_mov,
+        monto=abs(diferencia),
+        concepto=f"[Ajuste] {datos.concepto}",
+        created_at=ahora,
+    )
+    db.add(mov)
+
+    cuenta.saldo_actual = datos.saldo_nuevo
+    cuenta.saldo_cargado_por = nombre_usuario
+    cuenta.saldo_fecha = ahora
+    try:
+        db.commit()
+        db.refresh(cuenta)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Error al ajustar el saldo.")
+    return cuenta
 
 @app.get("/api/v1/tesoreria/cuentas", tags=["Tesorería"], response_model=List[CuentaTesoreriaResponse])
 def listar_cuentas_tesoreria(
@@ -6484,6 +6615,165 @@ def listar_actividad_rtc(
 
     items.sort(key=lambda i: i.fecha, reverse=True)
     return items[:100]
+
+# --- Sincronización Offline-First ---
+@app.post("/api/v1/sincronizar", tags=["Sincronización Offline"], response_model=SincronizacionLoteResponse)
+def sincronizar_lote(
+    datos: SincronizacionLoteRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: TokenData = Depends(get_current_user)
+):
+    resultados = []
+    
+    for item in datos.items:
+        # Registrar el intento en la cola de sincronización de la base de datos para auditoría
+        nueva_sync = ColaSincronizacion(
+            empresa_id=usuario_actual.eid,
+            usuario_id=usuario_actual.usuario_id,
+            entidad=item.entidad,
+            datos_json=item.datos_json,
+            estado="pendiente",
+            intentos=1
+        )
+        db.add(nueva_sync)
+        db.commit()
+        db.refresh(nueva_sync)
+        
+        try:
+            payload = json.loads(item.datos_json)
+            
+            # 1. Sincronizar clientes creados en ruta/offline
+            if item.entidad == "cliente":
+                cedula = payload.get("cedula_rif", "").strip()
+                if not cedula:
+                    raise ValueError("Cédula/RIF es requerida para registrar el cliente.")
+                
+                existente = db.query(Cliente).filter(
+                    Cliente.empresa_id == usuario_actual.eid,
+                    Cliente.cedula_rif == cedula
+                ).first()
+                
+                if existente:
+                    existente.nombre = payload.get("nombre", existente.nombre).strip()
+                    existente.telefono = payload.get("telefono", existente.telefono).strip()
+                    existente.direccion = payload.get("direccion", existente.direccion).strip()
+                    id_remoto = existente.id
+                else:
+                    nuevo_cliente = Cliente(
+                        empresa_id=usuario_actual.eid,
+                        nombre=payload.get("nombre", "").strip(),
+                        cedula_rif=cedula,
+                        telefono=payload.get("telefono", "").strip(),
+                        direccion=payload.get("direccion", "").strip()
+                    )
+                    db.add(nuevo_cliente)
+                    db.commit()
+                    db.refresh(nuevo_cliente)
+                    id_remoto = nuevo_cliente.id
+                
+                nueva_sync.estado = "sincronizado"
+                db.commit()
+                resultados.append(SincronizacionResultado(id_local=item.id_local, sincronizado=True, id_remoto=id_remoto))
+                
+            # 2. Sincronizar visitas registradas offline
+            elif item.entidad == "visita":
+                cliente_id_local = payload.get("cliente_id")
+                cliente_rif = payload.get("cliente_cedula_rif")
+                cliente_db = None
+                if cliente_rif:
+                    cliente_db = db.query(Cliente).filter(
+                        Cliente.empresa_id == usuario_actual.eid,
+                        Cliente.cedula_rif == cliente_rif
+                    ).first()
+                
+                id_cliente_final = cliente_db.id if cliente_db else cliente_id_local
+                if not id_cliente_final:
+                    raise ValueError("ID de cliente no especificado o no encontrado en la base de datos.")
+                
+                nueva_visita = VisitaCliente(
+                    empresa_id=usuario_actual.eid,
+                    vendedor_id=usuario_actual.usuario_id,
+                    cliente_id=id_cliente_final,
+                    fecha_visita=datetime.datetime.strptime(payload.get("fecha_visita")[:10], "%Y-%m-%d").date() if payload.get("fecha_visita") else datetime.date.today(),
+                    comentarios=payload.get("comentarios", "").strip()
+                )
+                db.add(nueva_visita)
+                db.commit()
+                db.refresh(nueva_visita)
+                
+                encuesta_data = payload.get("encuesta")
+                if encuesta_data:
+                    nueva_encuesta = EncuestaMarketing(
+                        visita_id=nueva_visita.id,
+                        inventario_cliente=encuesta_data.get("inventario_cliente", ""),
+                        rotacion_productos=encuesta_data.get("rotacion_productos", "")
+                    )
+                    db.add(nueva_encuesta)
+                    db.commit()
+                
+                nueva_sync.estado = "sincronizado"
+                db.commit()
+                resultados.append(SincronizacionResultado(id_local=item.id_local, sincronizado=True, id_remoto=nueva_visita.id))
+                
+            # 3. Sincronizar tickets de venta creados en modo local
+            elif item.entidad == "ticket":
+                prod_barras = payload.get("producto_codigo_barras")
+                producto_db = None
+                if prod_barras:
+                    producto_db = db.query(Producto).filter(
+                        Producto.empresa_id == usuario_actual.eid,
+                        Producto.codigo_barras == prod_barras
+                    ).first()
+                
+                prod_id = producto_db.id if producto_db else payload.get("producto_id")
+                if not prod_id:
+                    raise ValueError("Producto no encontrado en el catálogo del servidor.")
+                
+                cliente_rif = payload.get("cliente_cedula_rif")
+                cliente_db = None
+                if cliente_rif:
+                    cliente_db = db.query(Cliente).filter(
+                        Cliente.empresa_id == usuario_actual.eid,
+                        Cliente.cedula_rif == cliente_rif
+                    ).first()
+                
+                id_cliente_final = cliente_db.id if cliente_db else payload.get("cliente_id")
+                
+                nuevo_ticket = Ticket(
+                    empresa_id=usuario_actual.eid,
+                    usuario_id=usuario_actual.usuario_id,
+                    cliente_id=id_cliente_final,
+                    producto_id=prod_id,
+                    cantidad=Decimal(str(payload.get("cantidad", 1))),
+                    precio_unitario_usd=Decimal(str(payload.get("precio_unitario_usd", 0))),
+                    monto_usd=Decimal(str(payload.get("monto_usd", 0))),
+                    status=payload.get("status", "procesado")
+                )
+                db.add(nuevo_ticket)
+                db.commit()
+                db.refresh(nuevo_ticket)
+                
+                # Restar stock local en la base de datos de la nube
+                producto = db.query(Producto).filter(Producto.id == prod_id).first()
+                if producto:
+                    producto.stock = max(Decimal("0"), producto.stock - nuevo_ticket.cantidad)
+                    db.commit()
+                
+                nueva_sync.estado = "sincronizado"
+                db.commit()
+                resultados.append(SincronizacionResultado(id_local=item.id_local, sincronizado=True, id_remoto=nuevo_ticket.id))
+                
+            else:
+                raise ValueError(f"Entidad de sincronización no soportada: {item.entidad}")
+                
+        except Exception as e:
+            db.rollback()
+            nueva_sync.estado = "error"
+            nueva_sync.error_mensaje = str(e)
+            db.commit()
+            resultados.append(SincronizacionResultado(id_local=item.id_local, sincronizado=False, error=str(e)))
+            
+    return SincronizacionLoteResponse(resultados=resultados)
 
 
 # --- Servir el Frontend ya compilado (npm run build -> frontend/dist) ---

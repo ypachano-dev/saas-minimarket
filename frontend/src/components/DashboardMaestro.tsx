@@ -228,15 +228,15 @@ export default function DashboardMaestro({ tipoNegocio, rol }: { tipoNegocio?: s
     .reduce((acc, a) => acc + Number(a.monto_usd), 0);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-3 sm:p-6 space-y-6">
       {/* Encabezado Principal */}
-      <div className="rounded-3xl bg-slate-900 p-8 text-white border border-slate-800 shadow-xl flex justify-between items-center relative overflow-hidden">
+      <div className="rounded-3xl bg-slate-900 p-5 sm:p-8 text-white border border-slate-800 shadow-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 relative overflow-hidden">
         <div className="absolute right-0 top-0 text-9xl translate-x-10 translate-y-2 opacity-5 select-none pointer-events-none">📊</div>
         <div>
-          <h2 className="text-3xl font-black tracking-tight">Centro de Analítica e Inventarios</h2>
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mt-0.5">Auditoría en Caliente de Devoluciones, Rotación y Comisiones de Despacho</p>
+          <h2 className="text-xl sm:text-3xl font-black tracking-tight">Centro de Analítica e Inventarios</h2>
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mt-0.5">Auditoría en Caliente de Devoluciones, Rotación y Comisiones</p>
         </div>
-        <div className="flex flex-col items-end space-y-0.5 bg-slate-800 border border-slate-700 px-4 py-1.5 rounded-2xl font-medium">
+        <div className="flex flex-col items-start sm:items-end space-y-0.5 bg-slate-800 border border-slate-700 px-4 py-1.5 rounded-2xl font-medium shrink-0">
           <span className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Canal de Datos</span>
           <span className="text-xs font-black uppercase text-blue-400">{origenDatos}</span>
         </div>
@@ -541,7 +541,7 @@ export default function DashboardMaestro({ tipoNegocio, rol }: { tipoNegocio?: s
               <div className="py-16 text-center text-sm text-slate-400 font-medium">No hay datos de ventas para este rubro en el rango seleccionado.</div>
             ) : (
               <div className="mt-5 space-y-5">
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 text-center">
                     <p className="text-[9px] font-bold text-slate-400 uppercase">Monto Total</p>
                     <p className="text-base font-black text-slate-900 font-mono">${fmt(Number(detalleRubro.monto_total_usd))}</p>

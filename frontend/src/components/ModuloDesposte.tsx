@@ -217,8 +217,8 @@ export default function ModuloDesposte({ solicitudId, productoOrigenIdPrellenado
       )}
 
       {errorMsg && (
-        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold flex items-center gap-2 animate-bounce">
-          <span>⚠️ Error:</span> {errorMsg}
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold flex items-center gap-2">
+          <span>⚠️</span> {errorMsg}
         </div>
       )}
 
@@ -299,19 +299,26 @@ export default function ModuloDesposte({ solicitudId, productoOrigenIdPrellenado
                     {prodOrigenSel?.nombre ?? `Producto #${productoOrigenId}`}
                   </div>
                 ) : (
-                  <select
-                    value={productoOrigenId}
-                    onChange={(e) => setProductoOrigenId(Number(e.target.value) || "")}
-                    required
-                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 font-bold transition-all text-slate-800"
-                  >
-                    <option value="">Seleccionar canal...</option>
-                    {productosOrigenList.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.nombre} (Stock: {fmtKg(p.stock_total)} kg)
-                      </option>
-                    ))}
-                  </select>
+                  <>
+                    <select
+                      value={productoOrigenId}
+                      onChange={(e) => setProductoOrigenId(Number(e.target.value) || "")}
+                      required
+                      className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 font-bold transition-all text-slate-800"
+                    >
+                      <option value="">Seleccionar canal...</option>
+                      {productosOrigenList.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} (Stock: {fmtKg(p.stock_total)} kg)
+                        </option>
+                      ))}
+                    </select>
+                    {!cargando && productosOrigenList.length === 0 && (
+                      <p className="mt-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 leading-relaxed">
+                        No hay canales con stock disponible. Ve a <strong>Catálogo → Ficha de Producto</strong> y registra materias primas de Carnicería con tipo de venta <strong>por peso</strong>.
+                      </p>
+                    )}
+                  </>
                 )}
               </label>
 
@@ -384,6 +391,11 @@ export default function ModuloDesposte({ solicitudId, productoOrigenIdPrellenado
                         </option>
                       ))}
                     </select>
+                    {prodOrigenSel && cortesCompatibles.length === 0 && (
+                      <p className="mt-1 text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-2.5 py-1.5 leading-relaxed">
+                        No hay cortes registrados del mismo departamento (<strong>{prodOrigenSel.linea}</strong>). Agrégalos en <strong>Catálogo → Ficha de Producto</strong>.
+                      </p>
+                    )}
                   </label>
 
                   <label className="w-full md:w-40 flex flex-col">

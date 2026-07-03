@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import apiClient from "../api/client";
+import { useOfflineSync } from "../hooks/useOfflineSync";
 
 const INTERVALO_MINIMO_ENVIO_GPS_MS = 20000;
 
@@ -19,6 +20,7 @@ interface Cliente {
 interface Producto {
   id: number;
   codigo_interno: string;
+  codigo_barras?: string | null;
   nombre: string;
   precio_1_detalle: number;
   stock_total?: number;
@@ -110,6 +112,7 @@ interface ItemOrden {
 type TabKey = "encuesta" | "stockCero" | "compra" | "pago" | "presupuesto" | "datos";
 
 export default function ModuloVisitas() {
+  const { guardarTransaccionOffline } = useOfflineSync();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [clienteSeleccionado, setClienteSeleccionado] = useState<Cliente | null>(null);
@@ -307,6 +310,31 @@ export default function ModuloVisitas() {
       setItemsEncuesta([]);
       refrescarStockCero();
     } catch (err: any) {
+      // Control de contingencia offline: si el error es de conexión o no hay respuesta
+      const esErrorDeRed = !err.response || err.message === "Network Error";
+      if (esErrorDeRed && clienteSeleccionado) {
+        try {
+          const inventarioResumen = itemsEncuesta.map(i => `${i.producto.nombre}: ${i.stock_observado}u`).join(", ");
+          const quejasResumen = itemsEncuesta.filter(i => i.tiene_queja).map(i => `${i.producto.nombre}: ${i.detalle_queja}`).join("; ");
+          
+          guardarTransaccionOffline("visita", {
+            cliente_id: clienteSeleccionado.id,
+            cliente_cedula_rif: clienteSeleccionado.cedula,
+            fecha_visita: new Date().toISOString(),
+            comentarios: `Encuesta Offline. Inventario: [${inventarioResumen}]` + (quejasResumen ? ` Quejas: [${quejasResumen}]` : ""),
+            encuesta: {
+              inventario_cliente: inventarioResumen,
+              rotacion_productos: "Normal"
+            }
+          });
+          
+          setMensaje({ tipo: "ok", texto: "Encuesta guardada localmente (Offline). Se sincronizará automáticamente." });
+          setItemsEncuesta([]);
+          return;
+        } catch (offlineErr) {
+          console.error("Error al registrar encuesta offline:", offlineErr);
+        }
+      }
       setMensaje({ tipo: "error", texto: err.response?.data?.detail || "No se pudo guardar la encuesta." });
     } finally {
       setLoadingAccion(false);
@@ -383,6 +411,31 @@ export default function ModuloVisitas() {
       setCesta([]);
       setNotasOrden("");
     } catch (err: any) {
+      // Control de contingencia offline: si el error es de conexión o no hay respuesta
+      const esErrorDeRed = !err.response || err.message === "Network Error";
+      if (esErrorDeRed && clienteSeleccionado) {
+        try {
+          // El vendedor puede tomar órdenes offline. Se guardan en la cola local
+          for (const item of cesta) {
+            guardarTransaccionOffline("ticket", {
+              producto_id: item.producto.id,
+              producto_codigo_barras: item.producto.codigo_barras || null,
+              cliente_id: clienteSeleccionado.id,
+              cliente_cedula_rif: clienteSeleccionado.cedula,
+              cantidad: item.cantidad,
+              precio_unitario_usd: item.precio_unitario,
+              monto_usd: item.precio_unitario * item.cantidad,
+              status: "procesado"
+            });
+          }
+          setMensaje({ tipo: "ok", texto: `El ${tipoOrden} ha sido guardado localmente (Offline). Se sincronizará automáticamente.` });
+          setCesta([]);
+          setNotasOrden("");
+          return;
+        } catch (offlineErr) {
+          console.error("Error al registrar orden offline:", offlineErr);
+        }
+      }
       setMensaje({ tipo: "error", texto: err.response?.data?.detail || "No se pudo registrar la orden." });
     } finally {
       setLoadingAccion(false);

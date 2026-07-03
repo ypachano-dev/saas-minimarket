@@ -31,7 +31,15 @@ interface EmpresaConfigLite {
   logo_url: string | null;
 }
 
+interface TasaData { valor_bcv: number; valor_eur: number | null; fecha_actualizacion: string; }
+
 export default function ConfiguracionTienda() {
+  const [tasa, setTasa] = useState<TasaData | null>(null);
+  const [editUsd, setEditUsd] = useState("");
+  const [editEur, setEditEur] = useState("");
+  const [guardandoTasa, setGuardandoTasa] = useState(false);
+  const [msgTasa, setMsgTasa] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
   const [empresa, setEmpresa] = useState<EmpresaConfigLite | null>(null);
   const [config, setConfig] = useState<TicketConfigVM>(TICKET_CONFIG_DEFAULT);
   const [agentes, setAgentes] = useState({
@@ -55,6 +63,31 @@ export default function ConfiguracionTienda() {
   const [guardandoAgentes, setGuardandoAgentes] = useState(false);
   const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   const [mensajeAgentes, setMensajeAgentes] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
+  useEffect(() => {
+    apiClient.get<TasaData>("/api/v1/tasa").then((res) => {
+      setTasa(res.data);
+      setEditUsd(String(Number(res.data.valor_bcv)));
+      setEditEur(res.data.valor_eur ? String(Number(res.data.valor_eur)) : "");
+    }).catch(() => {});
+  }, []);
+
+  async function guardarTasa() {
+    setGuardandoTasa(true);
+    setMsgTasa(null);
+    try {
+      const usd = Number(editUsd);
+      const eur = Number(editEur);
+      if (!usd || usd <= 0) { setMsgTasa({ tipo: "error", texto: "Tasa USD inválida." }); setGuardandoTasa(false); return; }
+      const res = await apiClient.put<TasaData>("/api/v1/tasa", { valor_bcv: usd, valor_eur: eur > 0 ? eur : undefined });
+      setTasa(res.data);
+      setMsgTasa({ tipo: "ok", texto: "Tasas actualizadas correctamente." });
+    } catch (err: any) {
+      setMsgTasa({ tipo: "error", texto: err?.response?.data?.detail ?? "No se pudieron actualizar las tasas." });
+    } finally {
+      setGuardandoTasa(false);
+    }
+  }
 
   useEffect(() => {
     let activo = true;
@@ -144,6 +177,68 @@ export default function ConfiguracionTienda() {
         <h2 className="text-3xl font-black tracking-tight text-slate-900">Configuración de Tienda</h2>
         <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Personalización de Ticket de Caja</p>
       </header>
+
+      {/* ── SECCIÓN TASAS BCV ── */}
+      <section className="rounded-3xl border border-slate-100/80 bg-white p-6 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">💱 Tasas de Cambio BCV</h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Actualizadas automáticamente. Aquí puedes corregirlas manualmente si el BCV publicó un valor diferente.
+            </p>
+          </div>
+          {tasa && (
+            <span className="text-[10px] text-slate-400">
+              Última actualización: {new Date(tasa.fecha_actualizacion).toLocaleString("es-VE")}
+            </span>
+          )}
+        </div>
+
+        {msgTasa && (
+          <p className={`text-sm font-medium px-3 py-2 rounded-xl ${msgTasa.tipo === "ok" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+            {msgTasa.texto}
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+          <label className="flex flex-col">
+            <span className={labelCls}>$ USD/VES (Bolívares por Dólar)</span>
+            <input
+              type="number"
+              step="0.01"
+              min="1"
+              className={inputCls}
+              value={editUsd}
+              onChange={(e) => setEditUsd(e.target.value)}
+              placeholder="Ej. 652.97"
+            />
+          </label>
+          <label className="flex flex-col">
+            <span className={labelCls}>€ EUR/VES (Bolívares por Euro)</span>
+            <input
+              type="number"
+              step="0.01"
+              min="1"
+              className={inputCls}
+              value={editEur}
+              onChange={(e) => setEditEur(e.target.value)}
+              placeholder="Ej. 747.33"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={guardarTasa}
+            disabled={guardandoTasa}
+            className="bg-slate-950 hover:bg-blue-600 text-white rounded-xl px-4 py-2.5 text-sm font-bold transition-all disabled:opacity-40"
+          >
+            {guardandoTasa ? "Guardando..." : "Actualizar Tasas"}
+          </button>
+        </div>
+
+        <p className="text-[10px] text-slate-400">
+          Fuente oficial: <strong>www.bcv.org.ve</strong> — El sistema intenta actualizarlas automáticamente cada 4 horas.
+        </p>
+      </section>
 
       {mensaje && (
         <p className={`text-sm font-medium ${mensaje.tipo === "ok" ? "text-emerald-600" : "text-red-600"}`}>{mensaje.texto}</p>

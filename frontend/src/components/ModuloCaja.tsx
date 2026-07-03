@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback, type KeyboardEvent } from "react";
 import apiClient from "../api/client";
+import { useOfflineSync } from "../hooks/useOfflineSync";
 import DeliveryOrderForm from "./DeliveryOrderForm";
 import ModalSolicitudDesposte from "./ModalSolicitudDesposte";
 import { normalizeDept } from "../lib/departamentos";
@@ -307,6 +308,7 @@ function SeguimientoDesposteCaja({
 }
 
 export default function ModuloCaja() {
+  const { guardarTransaccionOffline } = useOfflineSync();
   const [scan, setScan] = useState("");
   const [mostrarDropdown, setMostrarDropdown] = useState(false);
   const [carrito, setCarrito] = useState<ItemCarrito[]>([]);
@@ -1166,6 +1168,90 @@ export default function ModuloCaja() {
 
     } catch (err: any) {
       console.error(err);
+      
+      // Control de contingencia offline: si el error es de conexión o no hay respuesta
+      const esErrorDeRed = !err.response || err.message === "Network Error";
+      if (esErrorDeRed && cliente) {
+        try {
+          // 1. Guardar ítems del carrito
+          if (carrito.length > 0) {
+            for (const item of carrito) {
+              guardarTransaccionOffline("ticket", {
+                producto_id: Number(item.id),
+                producto_codigo_barras: dbProductos.find(p => p.id === Number(item.id))?.codigo_barras || null,
+                cliente_id: cliente.id,
+                cliente_cedula_rif: cliente.cedula,
+                cantidad: item.cantidad,
+                precio_unitario_usd: item.precio,
+                monto_usd: item.precio * item.cantidad,
+                status: "procesado"
+              });
+            }
+          }
+          
+          // 2. Guardar pesajes de balanza seleccionados
+          if (ticketsSeleccionados.length > 0) {
+            for (const tId of ticketsSeleccionados) {
+              const tDetalle = ticketsPendientes.find(t => t.id === tId);
+              if (tDetalle) {
+                const prod = dbProductos.find(p => p.id === tDetalle.producto_id);
+                guardarTransaccionOffline("ticket", {
+                  producto_id: tDetalle.producto_id,
+                  producto_codigo_barras: prod?.codigo_barras || null,
+                  cliente_id: cliente.id,
+                  cliente_cedula_rif: cliente.cedula,
+                  cantidad: tDetalle.peso,
+                  precio_unitario_usd: prod ? Number(prod.precio_1_detalle) : 0,
+                  monto_usd: tDetalle.monto_usd,
+                  status: "procesado"
+                });
+              }
+            }
+          }
+
+          // 3. Simular la pantalla de pago completado en modo local
+          const totalCarritoUsd = carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
+          const ticketsSeleccionadosDetalles = ticketsPendientes.filter(t => ticketsSeleccionados.includes(t.id));
+          const totalBalanzaUsd = ticketsSeleccionadosDetalles.reduce((acc, t) => acc + Number(t.monto_usd), 0);
+          const totalFinalUsd = totalCarritoUsd + totalBalanzaUsd;
+          const totalFinalVes = totalFinalUsd * tasaBcv;
+
+          const porDepartamento: Record<string, number> = {
+            "Carnicería": 0,
+            "Verdulería": 0,
+            "Charcutería": 0,
+          };
+          ticketsSeleccionadosDetalles.forEach(t => {
+            const prod = dbProductos.find(p => p.id === t.producto_id);
+            const dept = prod?.linea ?? "General";
+            const deptName = dept.includes("Carnic") ? "Carnicería" 
+                           : dept.includes("Verdul") ? "Verdulería"
+                           : dept.includes("Charcut") ? "Charcutería" : "General";
+            porDepartamento[deptName] = (porDepartamento[deptName] || 0) + Number(t.monto_usd);
+          });
+
+          setPagoCompletadoData({
+            clienteName: cliente.nombre,
+            clienteCedula: cliente.cedula,
+            totalCarritoUsd,
+            totalBalanzaUsd,
+            porDepartamento,
+            totalUsd: totalFinalUsd,
+            totalVes: totalFinalVes,
+            metodoPago,
+            montoRecibido: Number(montoRecibido) || 0,
+            vuelto: Math.max(0, (Number(montoRecibido) || 0) - (metodoPago === "Efectivo Bs" ? totalFinalVes : totalFinalUsd)),
+            fecha: new Date().toLocaleTimeString("es-VE", { hour: "2-digit", minute: "2-digit" }),
+            facturaNum: Math.floor(Math.random() * 900000) + 100000,
+            offline: true
+          });
+          
+          return; // Finalizar cobro local sin error
+        } catch (offlineErr) {
+          console.error("Error procesando pago local offline:", offlineErr);
+        }
+      }
+
       setError(err.response?.data?.detail ?? "Error al procesar el cobro e inventario.");
     } finally {
       setProcesandoPago(false);
@@ -1825,7 +1911,7 @@ export default function ModuloCaja() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-3 sm:p-6 max-w-7xl mx-auto space-y-6">
       
       {/* Blinking Quality Alert Banner */}
       {encuestasPendientes.length > 0 && (
@@ -1871,15 +1957,15 @@ export default function ModuloCaja() {
       <div className="lg:col-span-2 space-y-6">
         
         {/* SCANNER SEARCH */}
-        <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm hover:shadow-md transition-all duration-300">
-          <div className="flex items-center justify-between">
+        <section className="rounded-3xl border border-slate-100 bg-white p-4 sm:p-6 shadow-sm hover:shadow-md transition-all duration-300">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div>
-              <h2 className="text-3xl font-black tracking-tight text-slate-900">Caja / POS</h2>
+              <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900">Caja / POS</h2>
               <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Buscador dinámico: código de barra o interno</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="bg-slate-100 text-slate-700 text-xs font-bold px-3 py-1 rounded-full">
-                Catálogo: {dbProductos.length} Productos
+                {dbProductos.length} Productos
               </span>
               <button
                 type="button"
@@ -1953,9 +2039,9 @@ export default function ModuloCaja() {
           </div>
 
           {carrito.length === 0 ? (
-            <p className="p-6 text-sm text-slate-400">Sin artículos de estante en el carrito. Escanee o agregue productos abajo.</p>
+            <p className="p-6 text-sm text-slate-400">Sin artículos en el carrito. Escanee o agregue productos.</p>
           ) : (
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto"><table className="w-full text-sm min-w-[520px]">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left">
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Producto</th>
@@ -2049,7 +2135,7 @@ export default function ModuloCaja() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           )}
         </section>
 
@@ -2292,7 +2378,7 @@ export default function ModuloCaja() {
       )}
 
       {/* --- Checkout Panel (Right Column) --- */}
-      <aside className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm hover:shadow-md transition-all duration-300 h-fit sticky top-6">
+      <aside className="rounded-3xl border border-slate-100 bg-white p-4 sm:p-6 shadow-sm hover:shadow-md transition-all duration-300 h-fit lg:sticky lg:top-6">
         <div className="flex items-center justify-between border-b border-slate-50 pb-3">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Liquidación POS</p>
           <span className="rounded-full bg-blue-50 border border-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue-700">

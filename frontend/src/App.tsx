@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import Sidebar, { MODULOS, type ViewKey } from "./components/Sidebar";
+import Sidebar, { MODULOS, BOTTOM_NAV_KEYS, type ViewKey } from "./components/Sidebar";
 import PlaceholderModulo from "./components/PlaceholderModulo";
 import IngresoDatos from "./components/IngresoDatos";
 import ModuloCRM from "./components/ModuloCRM";
@@ -55,6 +55,7 @@ export default function App() {
   const [view, setView] = useState<ViewKey>("dashboard");
   const [mostrarReporte, setMostrarReporte] = useState(false);
   const [inicializado, setInicializado] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [branding, setBranding] = useState<{
     tipo_negocio: string;
     nombre_comercial: string;
@@ -178,27 +179,96 @@ export default function App() {
 
   const modulo = MODULOS.find((m) => m.key === view) ?? MODULOS[0];
 
+  // Módulos disponibles para la barra inferior (filtrados por rol y habilitados)
+  const bottomNavModulos = MODULOS.filter((m) => {
+    if (!BOTTOM_NAV_KEYS.includes(m.key)) return false;
+    if (rol === "repartidor") return m.key === "delivery";
+    if (rol === "vendedor") return ["dashboard", "ficha"].includes(m.key);
+    if (modulosHabilitados?.length && !modulosHabilitados.includes(m.key)) return false;
+    return true;
+  });
+
   return (
     <div className="flex h-screen flex-col bg-slate-50">
       <BannerVencimiento onReportar={() => setMostrarReporte(true)} />
+
+      {/* ── Header móvil (visible solo en < lg) ── */}
+      <header className="lg:hidden flex items-center justify-between px-4 py-3 bg-[#0e1428] border-b border-white/5 flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          className="text-slate-300 hover:text-white text-xl p-1"
+          aria-label="Abrir menú"
+        >
+          ☰
+        </button>
+        <div className="flex items-center gap-2">
+          {branding?.logo_url ? (
+            <img src={branding.logo_url} alt="" className="w-7 h-7 rounded-lg object-cover" />
+          ) : (
+            <div className="w-7 h-7 rounded-lg bg-brand-gradient flex items-center justify-center">
+              <span className="text-white font-bold text-xs">
+                {(branding?.nombre_corto || branding?.nombre_comercial || "M").substring(0, 1).toUpperCase()}
+              </span>
+            </div>
+          )}
+          <span className="text-white font-bold text-sm truncate max-w-[160px]">
+            {branding?.nombre_corto || branding?.nombre_comercial || "MiniMarket"}
+          </span>
+        </div>
+        <div className="w-8" />
+      </header>
+
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          view={view}
-          setView={setView}
-          onLogout={handleLogout}
-          rol={rol}
-          tipoNegocio={branding?.tipo_negocio}
-          nombreEmpresa={branding?.nombre_comercial}
-          nombreCorto={branding?.nombre_corto}
-          logoUrl={branding?.logo_url}
-          modulosHabilitados={modulosHabilitados}
-        />
-        <main className="flex-1 overflow-y-auto">
+        {/* ── Sidebar desktop (lg+) ── */}
+        <div className="hidden lg:flex h-full flex-shrink-0">
+          <Sidebar
+            view={view}
+            setView={setView}
+            onLogout={handleLogout}
+            rol={rol}
+            tipoNegocio={branding?.tipo_negocio}
+            nombreEmpresa={branding?.nombre_comercial}
+            nombreCorto={branding?.nombre_corto}
+            logoUrl={branding?.logo_url}
+            modulosHabilitados={modulosHabilitados}
+          />
+        </div>
+
+        {/* ── Drawer móvil / tablet (< lg) ── */}
+        {drawerOpen && (
+          <div className="lg:hidden fixed inset-0 z-50 flex">
+            {/* Overlay */}
+            <div
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setDrawerOpen(false)}
+            />
+            {/* Panel */}
+            <div className="relative z-10 h-full flex-shrink-0 animate-[slideInLeft_200ms_ease-out]">
+              <Sidebar
+                view={view}
+                setView={setView}
+                onLogout={handleLogout}
+                onClose={() => setDrawerOpen(false)}
+                rol={rol}
+                tipoNegocio={branding?.tipo_negocio}
+                nombreEmpresa={branding?.nombre_comercial}
+                nombreCorto={branding?.nombre_corto}
+                logoUrl={branding?.logo_url}
+                modulosHabilitados={modulosHabilitados}
+                isDrawer
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ── Contenido principal ── */}
+        <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
           {view === "dashboard" && <DashboardMaestro tipoNegocio={branding?.tipo_negocio} rol={rol} />}
           {view === "delivery" && (rol === "repartidor" ? <ModuloRepartidor /> : <MapaDelivery />)}
           {view === "almacen" && <ModuloAlmacen tasaBcv={tasaBcv} />}
           {view === "ingreso" && (
-            <div className="p-6">
+            <div className="p-4 md:p-6">
               <IngresoDatos />
             </div>
           )}
@@ -216,12 +286,41 @@ export default function App() {
           {view === "configuracion" && <ConfiguracionTienda />}
 
           {!["dashboard", "delivery", "almacen", "ingreso", "crm", "ficha", "pos", "consola", "pedidos", "balanza", "tesoreria", "cuentas", "estadisticas", "visitas", "rutas", "configuracion"].includes(view) && (
-            <div className="p-6">
+            <div className="p-4 md:p-6">
               <PlaceholderModulo titulo={modulo.label} pendientes={modulo.pendientes ?? []} />
             </div>
           )}
         </main>
       </div>
+
+      {/* ── Barra de navegación inferior móvil/tablet (< lg) ── */}
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0e1428] border-t border-white/10 flex items-stretch">
+        {bottomNavModulos.map((m) => {
+          const isActive = view === m.key;
+          return (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => setView(m.key)}
+              className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold transition-colors ${
+                isActive ? "text-brand-primary" : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              <span className="text-lg leading-none">{m.icon}</span>
+              <span className="truncate max-w-[56px]">{m.label.split(" ")[0]}</span>
+            </button>
+          );
+        })}
+        {/* Botón "Más" siempre al final */}
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          <span className="text-lg leading-none">☰</span>
+          <span>Más</span>
+        </button>
+      </nav>
 
       {mostrarReporte && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setMostrarReporte(false)}>

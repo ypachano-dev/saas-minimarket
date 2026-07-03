@@ -28,6 +28,43 @@ const fmt = (n: number | string) => Number(n).toLocaleString("es-VE", { minimumF
 
 const renglonVacio = (): RenglonForm => ({ producto_id: "", cantidad: "", costo_unitario: "", codigo_lote: "", fecha_vencimiento: "" });
 
+function QuickAddProveedorAlmacen({ onCreado }: { onCreado: (p: Proveedor) => void }) {
+  const [open, setOpen] = useState(false);
+  const [nombre, setNombre] = useState("");
+  const [rif, setRif] = useState("");
+  const [err, setErr] = useState("");
+
+  async function guardar() {
+    setErr("");
+    if (!nombre.trim()) { setErr("Nombre obligatorio."); return; }
+    try {
+      const res = await apiClient.post<Proveedor>("/api/v1/proveedores", { nombre: nombre.trim(), rif: rif.trim() || "S/R" });
+      onCreado(res.data);
+      setNombre(""); setRif(""); setOpen(false);
+    } catch (ex: any) {
+      setErr(ex.response?.data?.detail ?? "Error al crear proveedor.");
+    }
+  }
+
+  if (!open) return (
+    <button type="button" onClick={() => setOpen(true)} className="mt-1.5 text-xs text-blue-600 hover:underline font-semibold">
+      + Crear proveedor rápido
+    </button>
+  );
+  return (
+    <div className="mt-2 p-3 bg-blue-50 border border-blue-100 rounded-xl space-y-2">
+      <p className="text-xs font-bold text-blue-700">Nuevo Proveedor</p>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre *" />
+      <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm" value={rif} onChange={(e) => setRif(e.target.value)} placeholder="RIF (opcional)" />
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setOpen(false)} className="flex-1 text-xs bg-white border border-slate-200 rounded-lg py-1.5 font-semibold">Cancelar</button>
+        <button type="button" onClick={guardar} className="flex-1 text-xs bg-blue-600 text-white rounded-lg py-1.5 font-semibold">Guardar</button>
+      </div>
+    </div>
+  );
+}
+
 export default function AlmacenIngreso() {
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -113,15 +150,18 @@ export default function AlmacenIngreso() {
         <h3 className="text-lg font-bold text-slate-900">📥 Recibir Mercancía (Ingreso / Descarga)</h3>
 
         <div className="grid grid-cols-2 gap-4">
-          <label className="flex flex-col">
-            <span className={labelCls}>Proveedor (opcional)</span>
-            <select className={inputCls} value={proveedorId} onChange={(e) => setProveedorId(e.target.value)}>
-              <option value="">Sin proveedor / compra local</option>
-              {proveedores.map((p) => (
-                <option key={p.id} value={p.id}>{p.nombre} ({p.rif})</option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-col">
+            <label className="flex flex-col">
+              <span className={labelCls}>Proveedor (opcional)</span>
+              <select className={inputCls} value={proveedorId} onChange={(e) => setProveedorId(e.target.value)}>
+                <option value="">Sin proveedor / compra local</option>
+                {proveedores.map((p) => (
+                  <option key={p.id} value={p.id}>{p.nombre} ({p.rif})</option>
+                ))}
+              </select>
+            </label>
+            <QuickAddProveedorAlmacen onCreado={(p) => { setProveedores((prev) => [...prev, p]); setProveedorId(String(p.id)); }} />
+          </div>
           <label className="flex flex-col">
             <span className={labelCls}>Orden de Compra a cubrir (opcional)</span>
             <select className={inputCls} value={ordenCompraId} onChange={(e) => setOrdenCompraId(e.target.value)}>
@@ -143,15 +183,23 @@ export default function AlmacenIngreso() {
 
           {renglones.map((r, idx) => (
             <div key={idx} className="grid grid-cols-12 gap-2 items-end bg-slate-50/50 p-3 rounded-2xl border border-slate-100">
-              <label className="col-span-3 flex flex-col">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Producto</span>
-                <select className={inputCls} value={r.producto_id} onChange={(e) => actualizarRenglon(idx, "producto_id", e.target.value)}>
-                  <option value="">Seleccionar...</option>
-                  {productos.map((p) => (
-                    <option key={p.id} value={p.id}>{p.nombre}</option>
-                  ))}
-                </select>
-              </label>
+              <div className="col-span-3 flex flex-col">
+                <label className="flex flex-col">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Producto</span>
+                  <select className={inputCls} value={r.producto_id} onChange={(e) => actualizarRenglon(idx, "producto_id", e.target.value)}>
+                    <option value="">Seleccionar...</option>
+                    {productos.map((p) => (
+                      <option key={p.id} value={p.id}>{p.nombre}</option>
+                    ))}
+                  </select>
+                </label>
+                {!r.producto_id && (
+                  <span className="mt-1 text-[10px] text-slate-400">
+                    ¿No aparece?{" "}
+                    <span className="text-blue-500 font-semibold">Ve a Catálogo → Ficha de Producto</span>
+                  </span>
+                )}
+              </div>
               <label className="col-span-2 flex flex-col">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Cantidad</span>
                 <input type="number" step="0.001" className={inputCls} value={r.cantidad} onChange={(e) => actualizarRenglon(idx, "cantidad", e.target.value)} placeholder="0.000" />

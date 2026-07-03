@@ -17,6 +17,19 @@
   }
 }
 
+/* Animación del drawer lateral en móvil */
+@keyframes slideInLeft {
+  from { translate: -100% 0; }
+  to   { translate: 0 0; }
+}
+
+/* Safe area para dispositivos con notch/barra de navegación nativa */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .bottom-nav-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
+
 /* Premium UI/UX custom utilities */
 .glass-card {
   background: rgba(255, 255, 255, 0.8);

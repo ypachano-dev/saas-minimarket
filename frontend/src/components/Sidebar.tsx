@@ -1,4 +1,5 @@
 import { APP_NAME, FIRMA_PROVEEDOR } from "../config/brand";
+import { useOfflineSync } from "../hooks/useOfflineSync";
 
 export type ViewKey =
   | "dashboard" | "ingreso" | "pos" | "pedidos" | "delivery"
@@ -31,57 +32,74 @@ export const MODULOS: ModuloDef[] = [
   { key: "consola", icon: "⚙️", label: "Consola SaaS Maestro" },
 ];
 
+// Los 5 módulos que aparecen en la barra inferior de móvil
+export const BOTTOM_NAV_KEYS: ViewKey[] = ["dashboard", "pos", "ficha", "balanza", "almacen"];
+
 const TAGLINE_POR_TIPO_NEGOCIO: Record<string, string> = {
-  minimarket: "MiniMarket Suite",
-  ferreteria: "Ferretería Suite",
-  agropecuaria: "Agropecuaria Suite",
-  ferreagropecuaria: "Agroferretería Suite",
+  minimarket: "3Q Nexus · MiniMarket",
+  ferreteria: "3Q Nexus · Ferretería",
+  agropecuaria: "3Q Nexus · Agropecuaria",
+  ferreagropecuaria: "3Q Nexus · Agroferretería",
 };
 
 export default function Sidebar({
   view,
   setView,
   onLogout,
+  onClose,
   rol,
   tipoNegocio,
   nombreEmpresa,
   nombreCorto,
   logoUrl,
-  modulosHabilitados
+  modulosHabilitados,
+  isDrawer = false,
 }: {
   view: ViewKey;
   setView: (v: ViewKey) => void;
   onLogout: () => void;
+  onClose?: () => void;
   rol?: string | null;
   tipoNegocio?: string | null;
   nombreEmpresa?: string | null;
   nombreCorto?: string | null;
   logoUrl?: string | null;
   modulosHabilitados?: string[];
+  isDrawer?: boolean;
 }) {
+  const { isOnline, queueLength, isSyncing, sincronizarCola } = useOfflineSync();
   const modulos = MODULOS.filter((m) => {
     if (m.key === "consola") return rol === "propietario";
     if (m.key === "configuracion") return rol === "admin" || rol === "propietario";
     if (rol === "repartidor") return m.key === "delivery";
-    
-    // Si el usuario es un vendedor, solo ve Dashboard, Visita Clientes, Rutas y Ficha Catálogo
     if (rol === "vendedor") {
       const allowedVendedor = ["dashboard", "visitas", "rutas", "ficha"];
       if (!allowedVendedor.includes(m.key)) return false;
     }
-    
-    // Filtro dinámico por feature flags provistos por el Backend para el inquilino
-    if (modulosHabilitados && !modulosHabilitados.includes(m.key)) {
-      return false;
-    }
+    if (modulosHabilitados && !modulosHabilitados.includes(m.key)) return false;
     return true;
   });
+
+  const handleNav = (key: ViewKey) => {
+    setView(key);
+    onClose?.();
+  };
 
   return (
     <aside className="w-64 bg-gradient-to-b from-[#0c1020] via-[#0e1428] to-[#080b16] text-slate-400 p-5 flex flex-col justify-between h-full border-r border-white/5 shadow-2xl">
       <div className="flex flex-col overflow-hidden h-full">
         {/* Brand Header */}
         <div className="px-3 py-4 mb-4 flex items-center gap-3">
+          {isDrawer && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="mr-1 text-slate-400 hover:text-white transition-colors"
+              aria-label="Cerrar menú"
+            >
+              ✕
+            </button>
+          )}
           {logoUrl ? (
             <img
               src={logoUrl}
@@ -101,7 +119,7 @@ export default function Sidebar({
               {nombreCorto || nombreEmpresa || APP_NAME}
             </h1>
             <p className="text-[10px] font-semibold uppercase tracking-widest text-brand-primary mt-1">
-              {(tipoNegocio && TAGLINE_POR_TIPO_NEGOCIO[tipoNegocio]) || "MiniMarket Suite"}
+              {(tipoNegocio && TAGLINE_POR_TIPO_NEGOCIO[tipoNegocio]) || "3Q Nexus"}
             </p>
           </div>
         </div>
@@ -114,7 +132,7 @@ export default function Sidebar({
               <button
                 key={m.key}
                 type="button"
-                onClick={() => setView(m.key)}
+                onClick={() => handleNav(m.key)}
                 className={`group flex items-center gap-3 rounded-xl px-3.5 py-3 text-xs font-medium text-left transition-all duration-300 transform hover:translate-x-1 ${
                   isActive
                     ? "bg-brand-menu-active text-white border-l-[3px] border-brand-primary shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] glow-brand"
@@ -142,7 +160,40 @@ export default function Sidebar({
             <p className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">Rol Actual</p>
           </div>
         </div>
-        
+
+        {/* Indicador de Conectividad Premium (Offline-First) */}
+        <div className="flex flex-col gap-1.5 px-3 py-2 bg-slate-900/40 rounded-xl border border-white/5 text-[10px]">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500 font-medium">Conectividad</span>
+            {isOnline ? (
+              <span className="flex items-center gap-1 font-semibold text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                En línea
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 font-semibold text-rose-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                Modo local
+              </span>
+            )}
+          </div>
+          {queueLength > 0 && (
+            <div className="flex items-center justify-between mt-1 pt-1.5 border-t border-white/5">
+              <span className="text-amber-400 font-semibold">{queueLength} pendientes</span>
+              <button
+                type="button"
+                onClick={sincronizarCola}
+                disabled={isSyncing || !isOnline}
+                className={`px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold border border-amber-500/25 transition-all text-[9px] cursor-pointer ${
+                  (isSyncing || !isOnline) ? "opacity-40 cursor-not-allowed" : ""
+                }`}
+              >
+                {isSyncing ? "Sincronizando..." : "Sincronizar"}
+              </button>
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={onLogout}

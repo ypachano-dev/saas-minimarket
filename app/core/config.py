@@ -10,7 +10,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "SUPER_SECRET_KEY_PRODUCCION_MINIMARKET_2026"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 Días
     
-    # Conexión Base de Datos - ¡Cambiado a SQLite automático para evitar XAMPP!
+    # Dev local: SQLite sin configuración extra.
+    # Producción (DigitalOcean): setear DATABASE_URL en el .env o en las variables
+    # de entorno del App Platform:
+    #   postgresql://usuario:password@host:25060/dbname?sslmode=require
     DATABASE_URL: str = "sqlite:///./saas_minimarket.db"
 
     # Agentes de IA (VALE, YHORGE, ALO) - usan la API de Anthropic si hay key configurada.
