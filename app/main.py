@@ -11,6 +11,7 @@ from app.core.security import (
     generar_hash_password, verificar_password, crear_access_token, get_current_user, verificar_rol,
     crear_token_autorizacion_precio, verificar_token_autorizacion_precio,
 )
+from pydantic import BaseModel
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -51,6 +52,7 @@ from app.models.orden_venta import OrdenVenta, OrdenVentaItem
 from app.models.ruta import RutaVendedor, RutaActividad
 from app.models.renglon_gasto import RenglonGasto, PagoRenglon
 from app.models.sincronizacion import ColaSincronizacion
+from app.models.saas_configuracion import SaasConfiguracion
 from app.schemas import SincronizacionLoteRequest, SincronizacionLoteResponse, SincronizacionResultado
 from app.core.ai_agent import tiene_agente_ia, consultar_agente
 from app.core.negocio_config import TipoNegocio, NEGOCIO_CONFIG, GUIAS_AGENTES_IA, normalizar_tipo_negocio
@@ -217,6 +219,28 @@ def _crear_indices_defensivos() -> None:
                 conn.execute(text(ddl))
             except Exception:
                 pass  # Columna ya existe
+        # Tabla de configuración SaaS (singleton)
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS saasConfiguracion (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    nombre_proveedor VARCHAR(100) NOT NULL DEFAULT '',
+                    banco_nombre VARCHAR(80) NOT NULL DEFAULT '',
+                    banco_codigo VARCHAR(10) NOT NULL DEFAULT '',
+                    rif VARCHAR(20) NOT NULL DEFAULT '',
+                    telefono_cobro VARCHAR(20) NOT NULL DEFAULT '',
+                    zelle_email VARCHAR(100) NOT NULL DEFAULT '',
+                    zelle_titular VARCHAR(100) NOT NULL DEFAULT ''
+                )
+            """))
+            existing = conn.execute(text("SELECT COUNT(*) FROM saasConfiguracion")).scalar()
+            if existing == 0:
+                conn.execute(text(
+                    "INSERT INTO saasConfiguracion (id, nombre_proveedor, banco_nombre, banco_codigo, rif, telefono_cobro, zelle_email, zelle_titular) "
+                    "VALUES (1, '', '', '', '', '', '', '')"
+                ))
+        except Exception:
+            pass
         conn.commit()
 
 # Función puente para abrir y cerrar la base de datos automáticamente
@@ -6617,6 +6641,51 @@ def listar_actividad_rtc(
     return items[:100]
 
 # --- Sincronización Offline-First ---
+@app.get("/api/v1/saas-config", tags=["SaaS Config"])
+def get_saas_config(db: Session = Depends(get_db)):
+    row = db.query(SaasConfiguracion).filter(SaasConfiguracion.id == 1).first()
+    if not row:
+        return {"id": 1, "nombre_proveedor": "", "banco_nombre": "", "banco_codigo": "",
+                "rif": "", "telefono_cobro": "", "zelle_email": "", "zelle_titular": ""}
+    return {
+        "id": row.id,
+        "nombre_proveedor": row.nombre_proveedor,
+        "banco_nombre": row.banco_nombre,
+        "banco_codigo": row.banco_codigo,
+        "rif": row.rif,
+        "telefono_cobro": row.telefono_cobro,
+        "zelle_email": row.zelle_email,
+        "zelle_titular": row.zelle_titular,
+    }
+
+class SaasConfigUpdate(BaseModel):
+    nombre_proveedor: str = ""
+    banco_nombre: str = ""
+    banco_codigo: str = ""
+    rif: str = ""
+    telefono_cobro: str = ""
+    zelle_email: str = ""
+    zelle_titular: str = ""
+
+@app.put("/api/v1/saas-config", tags=["SaaS Config"])
+def update_saas_config(data: SaasConfigUpdate, db: Session = Depends(get_db)):
+    row = db.query(SaasConfiguracion).filter(SaasConfiguracion.id == 1).first()
+    if not row:
+        row = SaasConfiguracion(id=1, nombre_proveedor="", banco_nombre="", banco_codigo="",
+                                rif="", telefono_cobro="", zelle_email="", zelle_titular="")
+        db.add(row)
+    row.nombre_proveedor = data.nombre_proveedor.strip()
+    row.banco_nombre = data.banco_nombre.strip()
+    row.banco_codigo = data.banco_codigo.strip()
+    row.rif = data.rif.strip()
+    row.telefono_cobro = data.telefono_cobro.strip()
+    row.zelle_email = data.zelle_email.strip()
+    row.zelle_titular = data.zelle_titular.strip()
+    db.commit()
+    db.refresh(row)
+    return {"ok": True}
+
+
 @app.post("/api/v1/sincronizar", tags=["Sincronización Offline"], response_model=SincronizacionLoteResponse)
 def sincronizar_lote(
     datos: SincronizacionLoteRequest,

@@ -12,6 +12,21 @@ const TIPOS_NEGOCIO = [
   { value: "ferreagropecuaria", label: "FerreAgropecuaria" },
 ] as const;
 
+interface SaasConfig {
+  nombre_proveedor: string;
+  banco_nombre: string;
+  banco_codigo: string;
+  rif: string;
+  telefono_cobro: string;
+  zelle_email: string;
+  zelle_titular: string;
+}
+
+const configVacio: SaasConfig = {
+  nombre_proveedor: "", banco_nombre: "", banco_codigo: "",
+  rif: "", telefono_cobro: "", zelle_email: "", zelle_titular: "",
+};
+
 interface SaasPago {
   id: number;
   empresa_id: number;
@@ -148,6 +163,10 @@ export default function ModuloEmpresas() {
   const [pagoError, setPagoError] = useState("");
   const [suscripcion, actualizarSuscripcion] = useSuscripcion();
   const [catalogoPlanes, setCatalogoPlanes] = useState<PlanCatalogo[]>([]);
+  const [saasConfig, setSaasConfig] = useState<SaasConfig>(configVacio);
+  const [editandoConfig, setEditandoConfig] = useState(false);
+  const [configForm, setConfigForm] = useState<SaasConfig>(configVacio);
+  const [guardandoConfig, setGuardandoConfig] = useState(false);
 
   async function cargarEmpresas() {
     setCargandoEmpresas(true);
@@ -169,10 +188,32 @@ export default function ModuloEmpresas() {
     }
   }
 
+  async function cargarSaasConfig() {
+    try {
+      const { data } = await apiClient.get<SaasConfig>("/api/v1/saas-config");
+      setSaasConfig(data);
+    } catch (err) {
+      console.error("Error al cargar config SaaS:", err);
+    }
+  }
+
+  async function guardarSaasConfig() {
+    setGuardandoConfig(true);
+    try {
+      await apiClient.put("/api/v1/saas-config", configForm);
+      setSaasConfig({ ...configForm });
+      setEditandoConfig(false);
+    } catch (err) {
+      console.error("Error al guardar config:", err);
+    }
+    setGuardandoConfig(false);
+  }
+
   useEffect(() => {
     apiClient.get<PlanCatalogo[]>("/api/v1/planes").then(({ data }) => setCatalogoPlanes(data));
     cargarEmpresas();
     cargarPagos();
+    cargarSaasConfig();
   }, []);
 
   function set<K extends keyof typeof initialForm>(key: K, value: string) {
@@ -485,7 +526,7 @@ export default function ModuloEmpresas() {
 
     let mensaje = "";
     if (tipo === "cobro") {
-      mensaje = `Estimado dueño de ${emp.nombre_comercial}, le saludamos de 3Q Solutions. Le recordamos amablemente que su suscripción al plan ${planName} vence el ${emp.fecha_vencimiento} (Monto: $${planPrice}/mes). Puede reportar su pago en su panel administrativo. ¡Gracias por su preferencia!`;
+      mensaje = `Estimado dueño de ${emp.nombre_comercial}, le saludamos de ${saasConfig.nombre_proveedor || "su proveedor SaaS"}. Le recordamos amablemente que su suscripción al plan ${planName} vence el ${emp.fecha_vencimiento} (Monto: $${planPrice}/mes). Puede reportar su pago en su panel administrativo. ¡Gracias por su preferencia!`;
     } else {
       mensaje = `¡Súper Promoción para ${emp.nombre_comercial}! 🚀 Renueve hoy su plan anual de ${planName} y obtenga un 20% de descuento o reciba 2 meses adicionales totalmente gratis. Responda a este mensaje para reclamar su oferta.`;
     }
@@ -624,19 +665,82 @@ export default function ModuloEmpresas() {
         </div>
 
         {/* Datos Bancarios Referenciales para Enviar */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50/30 border border-blue-100 p-4 rounded-2xl">
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🏦 Cuentas de Cobro Nacional (Pago Móvil)</h4>
-            <p className="text-xs text-slate-600"><span className="font-semibold">Banco:</span> Banesco (0134)</p>
-            <p className="text-xs text-slate-600"><span className="font-semibold">RIF:</span> J-31294829-0</p>
-            <p className="text-xs text-slate-600"><span className="font-semibold">Teléfono:</span> 0414-1234567</p>
+        {editandoConfig ? (
+          <div className="bg-blue-50/30 border border-blue-200 p-4 rounded-2xl space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">Editar Datos de Cobro</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Nombre del Proveedor</label>
+                <input className={inputCls} value={configForm.nombre_proveedor} onChange={e => setConfigForm(p => ({ ...p, nombre_proveedor: e.target.value }))} placeholder="Tu empresa o nombre comercial" />
+              </div>
+              <div>
+                <label className={labelCls}>RIF del Proveedor</label>
+                <input className={inputCls} value={configForm.rif} onChange={e => setConfigForm(p => ({ ...p, rif: e.target.value }))} placeholder="J-12345678-9" />
+              </div>
+              <div>
+                <label className={labelCls}>Banco (Pago Móvil)</label>
+                <input className={inputCls} value={configForm.banco_nombre} onChange={e => setConfigForm(p => ({ ...p, banco_nombre: e.target.value }))} placeholder="Ej: Banesco" />
+              </div>
+              <div>
+                <label className={labelCls}>Código del Banco</label>
+                <input className={inputCls} value={configForm.banco_codigo} onChange={e => setConfigForm(p => ({ ...p, banco_codigo: e.target.value }))} placeholder="Ej: 0134" />
+              </div>
+              <div>
+                <label className={labelCls}>Teléfono Pago Móvil</label>
+                <input className={inputCls} value={configForm.telefono_cobro} onChange={e => setConfigForm(p => ({ ...p, telefono_cobro: e.target.value }))} placeholder="04XX-XXXXXXX" />
+              </div>
+              <div>
+                <label className={labelCls}>Correo Zelle</label>
+                <input className={inputCls} value={configForm.zelle_email} onChange={e => setConfigForm(p => ({ ...p, zelle_email: e.target.value }))} placeholder="pagos@tuempresa.com" />
+              </div>
+              <div className="md:col-span-2">
+                <label className={labelCls}>Titular Zelle</label>
+                <input className={inputCls} value={configForm.zelle_titular} onChange={e => setConfigForm(p => ({ ...p, zelle_titular: e.target.value }))} placeholder="Nombre del titular en Zelle" />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={guardarSaasConfig} disabled={guardandoConfig}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-50">
+                {guardandoConfig ? "Guardando…" : "Guardar"}
+              </button>
+              <button type="button" onClick={() => setEditandoConfig(false)}
+                className="rounded-xl bg-slate-100 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 transition-colors">
+                Cancelar
+              </button>
+            </div>
           </div>
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🇺🇸 Cuentas de Cobro Internacional (Zelle)</h4>
-            <p className="text-xs text-slate-600"><span className="font-semibold">Correo Zelle:</span> pagos@3qsolutions.com</p>
-            <p className="text-xs text-slate-600"><span className="font-semibold">Titular:</span> 3Q Solutions Corp.</p>
+        ) : (
+          <div className="relative grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50/30 border border-blue-100 p-4 rounded-2xl">
+            <button type="button"
+              onClick={() => { setConfigForm({ ...saasConfig }); setEditandoConfig(true); }}
+              className="absolute top-3 right-3 rounded-lg bg-white border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors shadow-sm">
+              ✏️ Editar
+            </button>
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🏦 Cuentas de Cobro Nacional (Pago Móvil)</h4>
+              {saasConfig.banco_nombre ? (
+                <>
+                  <p className="text-xs text-slate-600"><span className="font-semibold">Banco:</span> {saasConfig.banco_nombre}{saasConfig.banco_codigo ? ` (${saasConfig.banco_codigo})` : ""}</p>
+                  <p className="text-xs text-slate-600"><span className="font-semibold">RIF:</span> {saasConfig.rif}</p>
+                  <p className="text-xs text-slate-600"><span className="font-semibold">Teléfono:</span> {saasConfig.telefono_cobro}</p>
+                </>
+              ) : (
+                <p className="text-xs text-slate-400 italic">Sin configurar — haz clic en Editar</p>
+              )}
+            </div>
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 mb-1">🇺🇸 Cuentas de Cobro Internacional (Zelle)</h4>
+              {saasConfig.zelle_email ? (
+                <>
+                  <p className="text-xs text-slate-600"><span className="font-semibold">Correo Zelle:</span> {saasConfig.zelle_email}</p>
+                  <p className="text-xs text-slate-600"><span className="font-semibold">Titular:</span> {saasConfig.zelle_titular}</p>
+                </>
+              ) : (
+                <p className="text-xs text-slate-400 italic">Sin configurar — haz clic en Editar</p>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
