@@ -13,7 +13,7 @@ import MapaDelivery from "./components/MapaDelivery";
 import ModuloRepartidor from "./components/ModuloRepartidor";
 import BannerVencimiento from "./components/BannerVencimiento";
 import ReportePagoCliente from "./components/ReportePagoCliente";
-import ModuloPedidos from "./components/ModuloPedidos"; // <-- 🚀 IMPORTACIÓN CLAVADA AQUÍ
+import ModuloPedidos from "./components/ModuloPedidos";
 import ModuloBalanza from "./components/ModuloBalanza";
 import ModuloTesoreria from "./components/ModuloTesoreria";
 import ModuloCartera from "./components/ModuloCartera";
@@ -21,72 +21,36 @@ import ModuloEstadisticas from "./components/ModuloEstadisticas";
 import ModuloVisitas from "./components/ModuloVisitas";
 import ModuloRutas from "./components/ModuloRutas";
 import ConfiguracionTienda from "./components/ConfiguracionTienda";
+import ModuloFacturacion from "./components/ModuloFacturacion";
 import apiClient from "./api/client";
 import { FIRMA_PROVEEDOR } from "./config/brand";
+import { useAuthorization } from "./hooks/useAuthorization";
 
-// Decodifica el claim "rol" del JWT sin librerías externas
-function getRolFromToken(): string | null {
-  const token = localStorage.getItem("access_token");
-  if (!token) return null;
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload.rol ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
-  const fullHex = hex.replace(shorthandRegex, (_, r, g, b) => r + r + g + g + b + b);
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(fullHex);
-  return result
-    ? {
-        r: parseInt(result[1], 16),
-        g: parseInt(result[2], 16),
-        b: parseInt(result[3], 16),
-      }
-    : null;
-}
 
 export default function App() {
   const [tasaBcv, setTasaBcv] = useState(602.33);
   const [autenticado, setAutenticado] = useState(!!localStorage.getItem("access_token"));
   const [view, setView] = useState<ViewKey>("dashboard");
   const [mostrarReporte, setMostrarReporte] = useState(false);
-  const [inicializado, setInicializado] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [branding, setBranding] = useState<{
-    tipo_negocio: string;
-    nombre_comercial: string;
-    nombre_corto?: string | null;
-    logo_url?: string | null;
-    color_primario?: string;
-    color_secundario?: string;
-    modulos_habilitados?: string[];
-    nomenclatura?: {
-      suite: string;
-      inventario: string;
-      item_inventario: string;
-      venta: string;
-    };
-  } | null>(null);
 
-  const rol = getRolFromToken();
-  const modulosHabilitados = branding?.modulos_habilitados ?? [];
+  // Hook centralizado de autorización: branding, módulos, IAs y roles
+  const auth = useAuthorization(autenticado);
+  const { empresaConfig, rol, cargando: inicializando, hasModule, hasRole } = auth;
 
   // Route Guard: verificar si el módulo actual está habilitado para este inquilino y rol
   const esModuloValido = (() => {
     if (view === "dashboard") return true;
-    if (view === "consola") return rol === "propietario";
-    if (view === "configuracion") return rol === "admin" || rol === "propietario";
+    if (view === "consola") return hasRole("propietario");
+    if (view === "configuracion") return hasRole("admin", "propietario");
     if (rol === "repartidor") return view === "delivery";
     if (rol === "vendedor") {
       const allowedVendedorKeys = ["dashboard", "visitas", "rutas", "ficha"];
       if (!allowedVendedorKeys.includes(view)) return false;
     }
-    return modulosHabilitados.includes(view);
+    return hasModule(view);
   })();
+
 
   useEffect(() => {
     if (autenticado) {
@@ -97,58 +61,21 @@ export default function App() {
           }
         })
         .catch(() => {});
-
-      const aplicarBranding = (data: any) => {
-        setBranding(data);
-
-        // Inyectar variables de color personalizadas de la empresa
-        const primaryColor = data.color_primario || "#8b5cf6";
-        const secondaryColor = data.color_secundario || "#6366f1";
-
-        document.documentElement.style.setProperty('--color-primary', primaryColor);
-        document.documentElement.style.setProperty('--color-secondary', secondaryColor);
-
-        const primaryRgb = hexToRgb(primaryColor);
-        const secondaryRgb = hexToRgb(secondaryColor);
-        if (primaryRgb) {
-          document.documentElement.style.setProperty('--color-primary-rgb', `${primaryRgb.r}, ${primaryRgb.g}, ${primaryRgb.b}`);
-        }
-        if (secondaryRgb) {
-          document.documentElement.style.setProperty('--color-secondary-rgb', `${secondaryRgb.r}, ${secondaryRgb.g}, ${secondaryRgb.b}`);
-        }
-      };
-
-      // Un solo reintento tras una breve espera: si el backend está en medio de un
-      // reinicio (deploy/restart de desarrollo), esta llamada puede fallar una vez
-      // sin que el negocio realmente carezca de módulos habilitados.
-      apiClient.get("/api/v1/empresa/mi-config")
-        .then((res) => {
-          if (res.data) aplicarBranding(res.data);
-          setInicializado(true);
-        })
-        .catch(() => {
-          setTimeout(() => {
-            apiClient.get("/api/v1/empresa/mi-config")
-              .then((res) => { if (res.data) aplicarBranding(res.data); })
-              .catch(() => {})
-              .finally(() => setInicializado(true));
-          }, 1500);
-        });
     }
   }, [autenticado]);
 
   // Si la vista actual no es válida para el inquilino o rol, hacemos un fallback seguro a "dashboard"
   useEffect(() => {
-    if (inicializado && !esModuloValido) {
+    if (!inicializando && !esModuloValido) {
       setView("dashboard");
     }
-  }, [view, inicializado, esModuloValido]);
+  }, [view, inicializando, esModuloValido]);
 
   if (!autenticado) {
     return <Login onLogin={() => setAutenticado(true)} />;
   }
 
-  if (autenticado && !inicializado) {
+  if (autenticado && inicializando) {
     return (
       <div className="flex h-screen w-screen flex-col items-center justify-center bg-[#080b16] text-white select-none">
         <div className="flex flex-col items-center space-y-6">
@@ -172,19 +99,18 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem("access_token");
-    setBranding(null);
-    setInicializado(false);
     setAutenticado(false);
   };
 
   const modulo = MODULOS.find((m) => m.key === view) ?? MODULOS[0];
 
   // Módulos disponibles para la barra inferior (filtrados por rol y habilitados)
+  const modulos_habilitados = empresaConfig?.modulos_habilitados ?? [];
   const bottomNavModulos = MODULOS.filter((m) => {
     if (!BOTTOM_NAV_KEYS.includes(m.key)) return false;
     if (rol === "repartidor") return m.key === "delivery";
     if (rol === "vendedor") return ["dashboard", "ficha"].includes(m.key);
-    if (modulosHabilitados?.length && !modulosHabilitados.includes(m.key)) return false;
+    if (modulos_habilitados.length && !modulos_habilitados.includes(m.key)) return false;
     return true;
   });
 
@@ -203,17 +129,17 @@ export default function App() {
           ☰
         </button>
         <div className="flex items-center gap-2">
-          {branding?.logo_url ? (
-            <img src={branding.logo_url} alt="" className="w-7 h-7 rounded-lg object-cover" />
+          {empresaConfig?.logo_url ? (
+            <img src={empresaConfig.logo_url} alt="" className="w-7 h-7 rounded-lg object-cover" />
           ) : (
             <div className="w-7 h-7 rounded-lg bg-brand-gradient flex items-center justify-center">
               <span className="text-white font-bold text-xs">
-                {(branding?.nombre_corto || branding?.nombre_comercial || "M").substring(0, 1).toUpperCase()}
+                {(empresaConfig?.nombre_corto || empresaConfig?.nombre_comercial || "M").substring(0, 1).toUpperCase()}
               </span>
             </div>
           )}
           <span className="text-white font-bold text-sm truncate max-w-[160px]">
-            {branding?.nombre_corto || branding?.nombre_comercial || "MiniMarket"}
+            {empresaConfig?.nombre_corto || empresaConfig?.nombre_comercial || "3Q Nexus"}
           </span>
         </div>
         <div className="w-8" />
@@ -227,11 +153,11 @@ export default function App() {
             setView={setView}
             onLogout={handleLogout}
             rol={rol}
-            tipoNegocio={branding?.tipo_negocio}
-            nombreEmpresa={branding?.nombre_comercial}
-            nombreCorto={branding?.nombre_corto}
-            logoUrl={branding?.logo_url}
-            modulosHabilitados={modulosHabilitados}
+            tipoNegocio={empresaConfig?.tipo_negocio}
+            nombreEmpresa={empresaConfig?.nombre_comercial}
+            nombreCorto={empresaConfig?.nombre_corto}
+            logoUrl={empresaConfig?.logo_url}
+            modulosHabilitados={empresaConfig?.modulos_habilitados}
           />
         </div>
 
@@ -251,11 +177,11 @@ export default function App() {
                 onLogout={handleLogout}
                 onClose={() => setDrawerOpen(false)}
                 rol={rol}
-                tipoNegocio={branding?.tipo_negocio}
-                nombreEmpresa={branding?.nombre_comercial}
-                nombreCorto={branding?.nombre_corto}
-                logoUrl={branding?.logo_url}
-                modulosHabilitados={modulosHabilitados}
+                tipoNegocio={empresaConfig?.tipo_negocio}
+                nombreEmpresa={empresaConfig?.nombre_comercial}
+                nombreCorto={empresaConfig?.nombre_corto}
+                logoUrl={empresaConfig?.logo_url}
+                modulosHabilitados={empresaConfig?.modulos_habilitados}
                 isDrawer
               />
             </div>
@@ -264,7 +190,7 @@ export default function App() {
 
         {/* ── Contenido principal ── */}
         <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
-          {view === "dashboard" && <DashboardMaestro tipoNegocio={branding?.tipo_negocio} rol={rol} />}
+          {view === "dashboard" && <DashboardMaestro tipoNegocio={empresaConfig?.tipo_negocio} rol={rol} />}
           {view === "delivery" && (rol === "repartidor" ? <ModuloRepartidor /> : <MapaDelivery />)}
           {view === "almacen" && <ModuloAlmacen tasaBcv={tasaBcv} />}
           {view === "ingreso" && (
@@ -284,8 +210,9 @@ export default function App() {
           {view === "visitas" && <ModuloVisitas />}
           {view === "rutas" && <ModuloRutas rol={rol} />}
           {view === "configuracion" && <ConfiguracionTienda />}
+          {view === "facturacion" && <ModuloFacturacion />}
 
-          {!["dashboard", "delivery", "almacen", "ingreso", "crm", "ficha", "pos", "consola", "pedidos", "balanza", "tesoreria", "cuentas", "estadisticas", "visitas", "rutas", "configuracion"].includes(view) && (
+          {!["dashboard", "delivery", "almacen", "ingreso", "crm", "ficha", "pos", "consola", "pedidos", "balanza", "tesoreria", "cuentas", "estadisticas", "visitas", "rutas", "configuracion", "facturacion"].includes(view) && (
             <div className="p-4 md:p-6">
               <PlaceholderModulo titulo={modulo.label} pendientes={modulo.pendientes ?? []} />
             </div>

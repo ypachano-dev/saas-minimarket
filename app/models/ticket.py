@@ -42,4 +42,7 @@ class Ticket(Base):
     turno_id: Mapped[int | None] = mapped_column(ForeignKey("turnocaja.id"), nullable=True)
     metodo_pago: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
+    # Relación opcional con la Factura fiscal del SENIAT
+    factura_id: Mapped[int | None] = mapped_column(ForeignKey("factura.id", ondelete="SET NULL"), nullable=True)
+
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())

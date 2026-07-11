@@ -96,6 +96,10 @@ class EmpresaConfigResponse(BaseModel):
     agente_alo_modelo: Optional[str] = None
     agente_alo_temperatura: Optional[float] = None
 
+    agente_vale_incluido: bool = False
+    agente_yhorge_incluido: bool = False
+    agente_alo_incluido: bool = False
+
     ticket_config: "TicketConfigResponse"
 
 # Molde de salida con la plantilla de ticket de Caja vigente para el inquilino
@@ -1203,7 +1207,7 @@ class StockCeroItem(BaseModel):
     stock_observado: Decimal
     creado_en: datetime.datetime
 
-class FacturaItemResponse(BaseModel):
+class HistorialCompraItemResponse(BaseModel):
     producto_id: int
     codigo: str
     nombre: str
@@ -1211,13 +1215,13 @@ class FacturaItemResponse(BaseModel):
     precio_unitario: Decimal
     total_linea: Decimal
 
-class FacturaResponse(BaseModel):
+class HistorialCompraResponse(BaseModel):
     id: int
     numero: str
     numero_factura_a2: Optional[str] = None
     fecha_emision: datetime.datetime
     total_usd: Decimal
-    items: List[FacturaItemResponse]
+    items: List[HistorialCompraItemResponse]
 
 class RankingProductoItem(BaseModel):
     producto_id: int
@@ -1528,4 +1532,50 @@ class SincronizacionResultado(BaseModel):
 
 class SincronizacionLoteResponse(BaseModel):
     resultados: List[SincronizacionResultado]
+
+
+# --- Esquemas para el Módulo de Facturación SENIAT ---
+class FacturaItemCreate(BaseModel):
+    producto_id: int
+    cantidad: Decimal
+    precio_unitario_usd: Decimal
+    aplica_iva: bool = True
+
+class FacturaCreate(BaseModel):
+    cliente_id: int
+    items: List[FacturaItemCreate]
+    presupuesto_id: Optional[int] = None
+    ticket_ids: Optional[List[int]] = None
+
+class FacturaItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    producto_id: int
+    producto_nombre: Optional[str] = None
+    cantidad: Decimal
+    precio_unitario_usd: Decimal
+    aplica_iva: bool
+    iva_porcentaje: Decimal
+    subtotal_usd: Decimal
+
+class FacturaResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    empresa_id: int
+    usuario_id: int
+    cliente_id: int
+    nro_factura: str
+    nro_control: str
+    cliente_nombre: str
+    cliente_rif: str
+    cliente_direccion: Optional[str] = None
+    tasa_bcv: Decimal
+    monto_exento_usd: Decimal
+    monto_imponible_usd: Decimal
+    monto_iva_usd: Decimal
+    total_usd: Decimal
+    total_ves: Decimal
+    presupuesto_id: Optional[int] = None
+    created_at: datetime.datetime
+    items: List[FacturaItemResponse]
 

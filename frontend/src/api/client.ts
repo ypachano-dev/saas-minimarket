@@ -20,4 +20,18 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      localStorage.removeItem("access_token");
+      // Evitar bucles de recarga si ya estamos en una página sin autenticación
+      if (window.location.pathname !== "/login") {
+        window.location.reload();
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default apiClient;

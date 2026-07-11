@@ -1,16 +1,7 @@
 import { useState, useEffect } from "react";
 import apiClient from "../api/client";
 
-interface ProductoBase {
-    id: string;
-    nombre: string;
-    proveedor: string;
-    stock_actual: number;
-    ventas_mensuales: number;
-    costo_anterior: number;
-    costo_actual: number;
-    fecha_vencimiento: string;
-}
+
 
 interface ItemBorrador {
     id: string;

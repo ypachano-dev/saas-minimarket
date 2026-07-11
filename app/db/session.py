@@ -1,6 +1,11 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker, Session
 from app.core.config import settings
+from contextvars import ContextVar
+from typing import Optional
+
+# Contexto global para almacenar el empresa_id del inquilino activo durante la petición
+tenant_context: ContextVar[Optional[int]] = ContextVar("tenant_context", default=None)
 
 if "sqlite" in settings.DATABASE_URL:
     engine = create_engine(
@@ -18,3 +23,20 @@ else:
     )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+@event.listens_for(Session, "do_orm_execute")
+def interceptar_queries_multi_tenant(orm_execute_state):
+    """
+    Intercepta de forma global cualquier consulta ORM e inyecta el filtro
+    de empresa_id de manera automática si el modelo mapeado lo posee.
+    """
+    if orm_execute_state.is_select and not orm_execute_state.execution_options.get("ignore_tenant_filter"):
+        tenant_id = tenant_context.get()
+        if tenant_id is not None:
+            # Iterar sobre todos los mapeadores involucrados en la consulta
+            for mapper in orm_execute_state.all_mappers:
+                if hasattr(mapper.class_, "empresa_id"):
+                    # Inyectar el filtro por el ID de la empresa del contexto actual
+                    orm_execute_state.statement = orm_execute_state.statement.filter(
+                        mapper.class_.empresa_id == tenant_id
+                    )

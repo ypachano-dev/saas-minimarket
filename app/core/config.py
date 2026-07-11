@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     # Configuración de Seguridad (Llave secreta para JWT tokens)
-    SECRET_KEY: str = "SUPER_SECRET_KEY_PRODUCCION_MINIMARKET_2026"
+    SECRET_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 Días
     
     # Dev local: SQLite sin configuración extra.

@@ -17,22 +17,8 @@ export default function Login({ onLogin }: LoginProps) {
     setError(null);
     setCargando(true);
 
-    // --- BYPASS DE SEGURIDAD PARA LA DEMO EN VIVO ---
-    // Si eres tú probando localmente, el sistema fabrica el token en caliente con rol de propietario
-    if (email.trim() === "ypachano@gmail.com") {
-      const header = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"; // Header JWT estándar
-      const payloadObj = { rol: "propietario", sub: "ypachano", name: "Yhonder Pachano" };
-      const payloadEncoded = btoa(JSON.stringify(payloadObj));
-      const mockToken = `${header}.${payloadEncoded}.signature_demo`;
-
-      localStorage.setItem("access_token", mockToken);
-      setCargando(false);
-      onLogin();
-      return;
-    }
-
     try {
-      // Intento normal por API para otros usuarios
+      // Intento normal por API
       const respuesta = await apiClient.post("/api/v1/auth/login", { email, password });
       if (respuesta.data && respuesta.data.access_token) {
         localStorage.setItem("access_token", respuesta.data.access_token);
@@ -83,7 +69,7 @@ export default function Login({ onLogin }: LoginProps) {
               onChange={(e) => setPassword(e.target.value)}
               className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 bg-white font-mono"
               placeholder="••••••••"
-              required={email !== "ypachano@gmail.com"}
+              required
             />
           </label>
 

@@ -41,15 +41,6 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> TokenData:
         headers={"WWW-Authenticate": "Bearer"},
     )
     
-    # SOPORTE DE BYPASS PARA DEMO LOCAL (YPANCHANO)
-    if token.endswith(".signature_demo"):
-        try:
-            payload = jwt.get_unverified_claims(token)
-            if payload.get("sub") == "ypachano":
-                return TokenData(usuario_id=1, eid=1, rol="propietario")
-        except Exception:
-            raise credenciales_invalidas
-
     try:
         # jwt.decode valida automáticamente la expiración (claim "exp")
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])

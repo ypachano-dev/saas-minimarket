@@ -11,6 +11,7 @@ from app.models.plan import Plan
 from app.models.saas_pago import SaasPago
 from app.models.cliente import Cliente
 from app.models.producto import Producto
+from app.models.factura import Factura
 from app.models.ticket import Ticket
 from app.models.lote import Lote
 from app.models.merma import Merma
@@ -40,7 +41,7 @@ def crear_estructura_SaaS():
         # Lee la Metadata de Base y crea las tablas físicas en el orden relacional correcto
         Base.metadata.create_all(bind=engine)
         print("Las tablas se crearon con exito en tu base de datos local.")
-        print("Tablas listas: Empresa, Usuario, Cliente, Producto, Ticket, Lote, Merma, TasaCambio, PeticionFaltante, SeguimientoBot, Proveedor, Vehiculo, PedidoDelivery, OrdenCompra, VisitaCliente, EncuestaMarketing, OrdenVenta, RutaVendedor, RutaActividad, ColaSincronizacion.")
+        print("Tablas listas: Empresa, Usuario, Cliente, Producto, Factura, Ticket, Lote, Merma, TasaCambio, PeticionFaltante, SeguimientoBot, Proveedor, Vehiculo, PedidoDelivery, OrdenCompra, VisitaCliente, EncuestaMarketing, OrdenVenta, RutaVendedor, RutaActividad, ColaSincronizacion.")
     except Exception as e:
         print(f"Error fatal al intentar mapear las tablas: {e}")
         print("\nGuia de supervivencia rapido:")

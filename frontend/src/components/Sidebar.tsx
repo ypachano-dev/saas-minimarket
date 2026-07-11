@@ -4,42 +4,54 @@ import { useOfflineSync } from "../hooks/useOfflineSync";
 export type ViewKey =
   | "dashboard" | "ingreso" | "pos" | "pedidos" | "delivery"
   | "crm" | "estadisticas" | "almacen" | "tesoreria" | "ficha" | "consola" | "cuentas" | "balanza"
-  | "visitas" | "rutas" | "configuracion";
+  | "visitas" | "rutas" | "configuracion" | "facturacion";
 
 export interface ModuloDef {
   key: ViewKey;
   icon: string;
   label: string;
+  category: "erp" | "crm" | "ias" | "sistema";
   pendientes?: string[];
 }
 
 export const MODULOS: ModuloDef[] = [
-  { key: "dashboard", icon: "📊", label: "Dashboard Maestro" },
-  { key: "ingreso", icon: "📥", label: "Ingreso de Datos", pendientes: ["Clientes", "Productos", "Empleados", "Usuarios", "Vehículos Delivery", "Proveedores"] },
-  { key: "visitas", icon: "🚗", label: "Visita Clientes", pendientes: ["Historial de cliente", "Toma de presupuesto", "Encuesta de marketing", "GPS y foto de fachada"] },
-  { key: "rutas", icon: "🗺️", label: "Agenda y Viáticos", pendientes: ["Planificación semanal", "Solicitud de viáticos", "Aprobación de gerente", "Seguimiento GPS en tiempo real"] },
-  { key: "balanza", icon: "⚖️", label: "Balanza Digital", pendientes: ["Pesaje carnicería", "Pesaje verdulería", "Pesaje charcutería"] },
-  { key: "pos", icon: "🛒", label: "Caja / POS", pendientes: ["Punto de venta", "Caja chica", "Lector de código de barras"] },
-  { key: "pedidos", icon: "📦", label: "Pedidos y Compras", pendientes: ["Gestión de órdenes", "Cálculo automático de compras según stock"] },
-  { key: "delivery", icon: "🚚", label: "Delivery Exprés" },
-  { key: "crm", icon: "🤝", label: "Módulo CRM (ALO)" },
-  { key: "estadisticas", icon: "📈", label: "Estadísticas Avanzadas (VALE)" },
-  { key: "almacen", icon: "🏢", label: "Gestión Almacén" },
-  { key: "cuentas", icon: "💸", label: "Cartera y Créditos (YHORGE)" },
-  { key: "tesoreria", icon: "🏦", label: "Bancos y Tesorería" },
-  { key: "ficha", icon: "🗂️", label: "Ficha de Catálogo", pendientes: ["Foto", "Nombre", "Descripción", "Marca", "Proveedor", "Código de barra", "Peso", "Presentación", "Fecha de vencimiento (FV)", "Fecha de elaboración", "Fecha de ingreso", "Tipo", "Ubicación"] },
-  { key: "configuracion", icon: "🧾", label: "Configuración de Tienda" },
-  { key: "consola", icon: "⚙️", label: "Consola SaaS Maestro" },
+  // ERP
+  { key: "dashboard", icon: "📊", label: "Dashboard Maestro", category: "erp" },
+  { key: "ingreso", icon: "📥", label: "Ingreso de Datos", category: "erp", pendientes: ["Clientes", "Productos", "Empleados", "Usuarios", "Vehículos Delivery", "Proveedores"] },
+  { key: "balanza", icon: "⚖️", label: "Balanza Digital", category: "erp", pendientes: ["Pesaje carnicería", "Pesaje verdulería", "Pesaje charcutería"] },
+  { key: "pos", icon: "🛒", label: "Caja / POS", category: "erp", pendientes: ["Punto de venta", "Caja chica", "Lector de código de barras"] },
+  { key: "almacen", icon: "🏢", label: "Gestión Almacén", category: "erp" },
+  { key: "pedidos", icon: "📦", label: "Pedidos y Compras", category: "erp", pendientes: ["Gestión de órdenes", "Cálculo automático de compras según stock"] },
+  { key: "delivery", icon: "🚚", label: "Delivery Exprés", category: "erp" },
+  { key: "tesoreria", icon: "🏦", label: "Bancos y Tesorería", category: "erp" },
+  { key: "ficha", icon: "🗂️", label: "Ficha de Catálogo", category: "erp", pendientes: ["Foto", "Nombre", "Descripción", "Marca", "Proveedor", "Código de barra", "Peso", "Presentación", "Fecha de vencimiento (FV)", "Fecha de elaboración", "Fecha de ingreso", "Tipo", "Ubicación"] },
+  { key: "facturacion", icon: "🧾", label: "Facturación SENIAT", category: "erp" },
+
+  // CRM
+  { key: "visitas", icon: "🚗", label: "Visita Clientes", category: "crm", pendientes: ["Historial de cliente", "Toma de presupuesto", "Encuesta de marketing", "GPS y foto de fachada"] },
+  { key: "rutas", icon: "🗺️", label: "Agenda y Viáticos", category: "crm", pendientes: ["Planificación semanal", "Solicitud de viáticos", "Aprobación de gerente", "Seguimiento GPS en tiempo real"] },
+
+  // IAs
+  { key: "crm", icon: "🤝", label: "Módulo CRM (ALO)", category: "ias" },
+  { key: "estadisticas", icon: "📈", label: "Estadísticas Avanzadas (VALE)", category: "ias" },
+  { key: "cuentas", icon: "💸", label: "Cartera y Créditos (YHORGE)", category: "ias" },
+
+  // Sistema
+  { key: "configuracion", icon: "🧾", label: "Configuración de Tienda", category: "sistema" },
+  { key: "consola", icon: "⚙️", label: "Consola SaaS Maestro", category: "sistema" },
 ];
 
 // Los 5 módulos que aparecen en la barra inferior de móvil
 export const BOTTOM_NAV_KEYS: ViewKey[] = ["dashboard", "pos", "ficha", "balanza", "almacen"];
 
 const TAGLINE_POR_TIPO_NEGOCIO: Record<string, string> = {
-  minimarket: "3Q Nexus · MiniMarket",
-  ferreteria: "3Q Nexus · Ferretería",
-  agropecuaria: "3Q Nexus · Agropecuaria",
-  ferreagropecuaria: "3Q Nexus · Agroferretería",
+  minimarket:    "3Q Nexus · MiniMarket",
+  carniceria:    "3Q Nexus · Carnicería",
+  ferreteria:    "3Q Nexus · Ferretería",
+  agroferreteria:"3Q Nexus · AgroFerretería",
+  agropecuaria:  "3Q Nexus · Agropecuaria",
+  // Legacy fallbacks
+  ferreagropecuaria: "3Q Nexus · AgroFerretería",
 };
 
 export default function Sidebar({
@@ -125,25 +137,41 @@ export default function Sidebar({
         </div>
 
         {/* Navigation Items */}
-        <nav className="flex flex-col gap-1 overflow-y-auto pr-1 flex-1 scrollbar-thin scrollbar-thumb-white/10">
-          {modulos.map((m) => {
-            const isActive = view === m.key;
+        <nav className="flex flex-col gap-4 overflow-y-auto pr-1 flex-1 scrollbar-thin scrollbar-thumb-white/10">
+          {[
+            { id: "erp", label: "Sistema ERP" },
+            { id: "crm", label: "Módulos CRM" },
+            { id: "ias", label: "Asistentes de IA" },
+            { id: "sistema", label: "Configuración y Soporte" }
+          ].map((cat) => {
+            const catModulos = modulos.filter((m) => m.category === cat.id);
+            if (catModulos.length === 0) return null;
             return (
-              <button
-                key={m.key}
-                type="button"
-                onClick={() => handleNav(m.key)}
-                className={`group flex items-center gap-3 rounded-xl px-3.5 py-3 text-xs font-medium text-left transition-all duration-300 transform hover:translate-x-1 ${
-                  isActive
-                    ? "bg-brand-menu-active text-white border-l-[3px] border-brand-primary shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] glow-brand"
-                    : "hover:bg-white/5 hover:text-slate-200 border-l-[3px] border-transparent"
-                }`}
-              >
-                <span className={`text-base transition-transform duration-300 group-hover:scale-110 ${isActive ? "opacity-100" : "opacity-70 group-hover:opacity-100"}`}>
-                  {m.icon}
+              <div key={cat.id} className="flex flex-col gap-1">
+                <span className="px-3.5 text-[9px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                  {cat.label}
                 </span>
-                <span className="truncate">{m.label}</span>
-              </button>
+                {catModulos.map((m) => {
+                  const isActive = view === m.key;
+                  return (
+                    <button
+                      key={m.key}
+                      type="button"
+                      onClick={() => handleNav(m.key)}
+                      className={`group flex items-center gap-3 rounded-xl px-3.5 py-2 text-xs font-medium text-left transition-all duration-300 transform hover:translate-x-1 ${
+                        isActive
+                          ? "bg-brand-menu-active text-white border-l-[3px] border-brand-primary shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] glow-brand"
+                          : "hover:bg-white/5 hover:text-slate-200 border-l-[3px] border-transparent"
+                      }`}
+                    >
+                      <span className={`text-base transition-transform duration-300 group-hover:scale-110 ${isActive ? "opacity-100" : "opacity-70 group-hover:opacity-100"}`}>
+                        {m.icon}
+                      </span>
+                      <span className="truncate">{m.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             );
           })}
         </nav>

@@ -12,9 +12,10 @@ from typing import TypedDict
 
 class TipoNegocio(str, enum.Enum):
     MINIMARKET = "minimarket"
+    CARNICERIA = "carniceria"
     FERRETERIA = "ferreteria"
+    AGROFERRETERIA = "agroferreteria"
     AGROPECUARIA = "agropecuaria"
-    FERREAGROPECUARIA = "ferreagropecuaria"
 
 
 class NomenclaturaNegocio(TypedDict):
@@ -39,7 +40,19 @@ NEGOCIO_CONFIG: dict[TipoNegocio, ConfigNegocio] = {
         },
         "modulos_base": [
             "dashboard", "ingreso", "balanza", "pos", "pedidos", "delivery",
-            "crm", "estadisticas", "almacen", "ficha", "tesoreria", "cuentas", "visitas",
+            "crm", "estadisticas", "almacen", "ficha", "tesoreria", "cuentas", "visitas", "facturacion",
+        ],
+    },
+    TipoNegocio.CARNICERIA: {
+        "nomenclatura": {
+            "suite": "3Q Nexus · Carnicería",
+            "inventario": "Cortes y Productos",
+            "item_inventario": "Corte/Pieza",
+            "venta": "Pesaje/Venta",
+        },
+        "modulos_base": [
+            "dashboard", "ingreso", "balanza", "pos", "almacen", "desposte",
+            "crm", "estadisticas", "tesoreria", "cuentas", "ficha", "facturacion",
         ],
     },
     TipoNegocio.FERRETERIA: {
@@ -50,8 +63,20 @@ NEGOCIO_CONFIG: dict[TipoNegocio, ConfigNegocio] = {
             "venta": "Despacho",
         },
         "modulos_base": [
-            "dashboard", "ingreso", "pos", "pedidos", "delivery",
-            "crm", "estadisticas", "almacen", "ficha", "tesoreria", "cuentas", "visitas", "rutas",
+            "dashboard", "ingreso", "pos", "almacen", "crm", "estadisticas", 
+            "tesoreria", "cuentas", "ficha", "pedidos", "delivery", "facturacion",
+        ],
+    },
+    TipoNegocio.AGROFERRETERIA: {
+        "nomenclatura": {
+            "suite": "3Q Nexus · AgroFerretería",
+            "inventario": "Insumos y Ferretería",
+            "item_inventario": "Artículo",
+            "venta": "Despacho",
+        },
+        "modulos_base": [
+            "dashboard", "ingreso", "pos", "almacen", "crm", "estadisticas", 
+            "tesoreria", "cuentas", "ficha", "visitas", "rutas", "pedidos", "facturacion",
         ],
     },
     TipoNegocio.AGROPECUARIA: {
@@ -62,40 +87,31 @@ NEGOCIO_CONFIG: dict[TipoNegocio, ConfigNegocio] = {
             "venta": "Despacho de Campo",
         },
         "modulos_base": [
-            "dashboard", "visitas", "rutas", "ficha", "crm", "estadisticas", "tesoreria", "cuentas",
-        ],
-    },
-    TipoNegocio.FERREAGROPECUARIA: {
-        "nomenclatura": {
-            "suite": "3Q Nexus · Agroferretería",
-            "inventario": "Insumos y Ferretería",
-            "item_inventario": "Artículo",
-            "venta": "Despacho",
-        },
-        "modulos_base": [
-            "dashboard", "visitas", "rutas", "ficha", "crm", "estadisticas", "tesoreria", "cuentas",
+            "dashboard", "visitas", "rutas", "ficha", "crm", "estadisticas", 
+            "tesoreria", "cuentas", "almacen", "pedidos", "facturacion",
         ],
     },
 }
 
-# Valores heredados que existían antes de la segregación en 4 sectores
+# Valores heredados para retrocompatibilidad
 _LEGACY_TIPO_NEGOCIO: dict[str, TipoNegocio] = {
-    "agroferreteria": TipoNegocio.FERREAGROPECUARIA,
+    "agroferreteria": TipoNegocio.AGROFERRETERIA,
+    "ferreagropecuaria": TipoNegocio.AGROFERRETERIA,
 }
 
 
 def normalizar_tipo_negocio(valor: "str | TipoNegocio | None") -> TipoNegocio:
-    """Convierte cualquier valor crudo (incl. valores heredados pre-migración)
-    en un miembro válido y estricto de TipoNegocio. Nunca lanza excepción:
-    ante un valor desconocido, cae de forma segura a MINIMARKET."""
+    """Convierte cualquier valor crudo en un miembro de TipoNegocio.
+    Cae de forma segura a MINIMARKET ante valores desconocidos."""
     if isinstance(valor, TipoNegocio):
         return valor
     if not valor:
         return TipoNegocio.MINIMARKET
-    if valor in _LEGACY_TIPO_NEGOCIO:
-        return _LEGACY_TIPO_NEGOCIO[valor]
+    val_lower = str(valor).lower().strip()
+    if val_lower in _LEGACY_TIPO_NEGOCIO:
+        return _LEGACY_TIPO_NEGOCIO[val_lower]
     try:
-        return TipoNegocio(valor)
+        return TipoNegocio(val_lower)
     except ValueError:
         return TipoNegocio.MINIMARKET
 
