@@ -39,6 +39,18 @@ def get_db():
         db.close()
 
 
+def verificar_maestro(usuario_actual: TokenData = Depends(verificar_rol(["propietario"]))) -> TokenData:
+    """Restringe la Consola Maestro al administrador de 3Q Solutions (empresa_id=1).
+    Un 'propietario' de cualquier otra empresa cliente NO debe poder ver, editar
+    ni eliminar datos de otras empresas del SaaS."""
+    if usuario_actual.eid != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo el administrador maestro de 3Q Solutions puede acceder a la Consola Maestro.",
+        )
+    return usuario_actual
+
+
 # ─────────────────────────────────────────────────────────────
 # Registro inicial de empresa + administrador
 # ─────────────────────────────────────────────────────────────
@@ -135,7 +147,7 @@ def registrar_empresa_y_admin(datos: RegistroEmpresaAdmin, db: Session = Depends
 )
 def listar_empresas_saas(
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(["propietario"])),
+    usuario_actual: TokenData = Depends(verificar_maestro),
 ):
     empresas = db.query(Empresa).all()
     resultado = []
@@ -143,6 +155,7 @@ def listar_empresas_saas(
         owner = (
             db.query(Usuario)
             .filter(Usuario.empresa_id == emp.id, Usuario.rol == "propietario")
+            .execution_options(ignore_tenant_filter=True)
             .first()
         )
         resultado.append(
@@ -187,7 +200,7 @@ def actualizar_empresa_saas(
     empresa_id: int,
     datos: EmpresaSaaSUpdate,
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(["propietario"])),
+    usuario_actual: TokenData = Depends(verificar_maestro),
 ):
     empresa = db.query(Empresa).filter(Empresa.id == empresa_id).first()
     if not empresa:
@@ -219,13 +232,14 @@ def actualizar_empresa_saas(
     owner = (
         db.query(Usuario)
         .filter(Usuario.empresa_id == empresa.id, Usuario.rol == "propietario")
+        .execution_options(ignore_tenant_filter=True)
         .first()
     )
     if owner:
         if datos.owner_email != owner.email:
             email_existente = db.query(Usuario).filter(
                 Usuario.email == datos.owner_email, Usuario.id != owner.id
-            ).first()
+            ).execution_options(ignore_tenant_filter=True).first()
             if email_existente:
                 raise HTTPException(status_code=400, detail="El correo del propietario ya está en uso.")
         owner.nombre = datos.owner_nombre
@@ -279,7 +293,7 @@ def actualizar_empresa_saas(
 def eliminar_empresa_saas(
     empresa_id: int,
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(["propietario"])),
+    usuario_actual: TokenData = Depends(verificar_maestro),
 ):
     if empresa_id == 1:
         raise HTTPException(status_code=400, detail="No se puede eliminar la empresa maestra principal.")
@@ -337,9 +351,14 @@ def subir_logo(
 )
 def listar_pagos_saas(
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(["propietario"])),
+    usuario_actual: TokenData = Depends(verificar_maestro),
 ):
-    pagos = db.query(SaasPago).order_by(SaasPago.fecha.desc(), SaasPago.created_at.desc()).all()
+    pagos = (
+        db.query(SaasPago)
+        .order_by(SaasPago.fecha.desc(), SaasPago.created_at.desc())
+        .execution_options(ignore_tenant_filter=True)
+        .all()
+    )
     resultado = []
     for p in pagos:
         emp = db.query(Empresa).filter(Empresa.id == p.empresa_id).first()
@@ -367,7 +386,7 @@ def listar_pagos_saas(
 def registrar_pago_saas(
     datos: SaasPagoCreate,
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(["propietario"])),
+    usuario_actual: TokenData = Depends(verificar_maestro),
 ):
     empresa = db.query(Empresa).filter(Empresa.id == datos.empresa_id).first()
     if not empresa:
@@ -435,7 +454,7 @@ def actualizar_plan(
     plan_id: int,
     datos: PlanUpdate,
     db: Session = Depends(get_db),
-    usuario_actual: TokenData = Depends(verificar_rol(["propietario"])),
+    usuario_actual: TokenData = Depends(verificar_maestro),
 ):
     plan = db.query(Plan).filter(Plan.id == plan_id).first()
     if not plan:
