@@ -25,7 +25,7 @@ export const MODULOS: ModuloDef[] = [
   { key: "delivery", icon: "🚚", label: "Delivery Exprés", category: "erp" },
   { key: "tesoreria", icon: "🏦", label: "Bancos y Tesorería", category: "erp" },
   { key: "ficha", icon: "🗂️", label: "Ficha de Catálogo", category: "erp", pendientes: ["Foto", "Nombre", "Descripción", "Marca", "Proveedor", "Código de barra", "Peso", "Presentación", "Fecha de vencimiento (FV)", "Fecha de elaboración", "Fecha de ingreso", "Tipo", "Ubicación"] },
-  { key: "facturacion", icon: "🧾", label: "Facturación SENIAT", category: "erp" },
+  { key: "facturacion", icon: "🧾", label: "Facturación", category: "erp" },
 
   // CRM
   { key: "visitas", icon: "🚗", label: "Visita Clientes", category: "crm", pendientes: ["Historial de cliente", "Toma de presupuesto", "Encuesta de marketing", "GPS y foto de fachada"] },

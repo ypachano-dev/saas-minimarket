@@ -84,6 +84,7 @@ export default function ModuloFacturacion() {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [presupuestos, setPresupuestos] = useState<PresupuestoDisponible[]>([]);
   const [tickets, setTickets] = useState<TicketDisponible[]>([]);
+  const [ticketsPendientesTodos, setTicketsPendientesTodos] = useState<TicketDisponible[]>([]);
   
   const [clienteSelected, setClienteSelected] = useState<number | "">("");
   const [tipoFacturacion, setTipoFacturacion] = useState<"directa" | "presupuesto" | "tickets_caja">("directa");
@@ -109,6 +110,8 @@ export default function ModuloFacturacion() {
     cargarClientes();
     cargarProductos();
     cargarTasa();
+    cargarPresupuestosDisponibles();
+    cargarTicketsPendientesTodos();
   }, []);
 
   useEffect(() => {
@@ -176,6 +179,33 @@ export default function ModuloFacturacion() {
     } catch (err) {
       console.error("Error cargando tickets", err);
     }
+  };
+
+  const cargarTicketsPendientesTodos = async () => {
+    try {
+      const { data } = await apiClient.get<TicketDisponible[]>("/api/v1/facturas-tickets-disponibles");
+      setTicketsPendientesTodos(data);
+    } catch (err) {
+      console.error("Error cargando tickets pendientes", err);
+    }
+  };
+
+  const iniciarFacturacionDesdePresupuesto = (p: PresupuestoDisponible) => {
+    setTipoFacturacion("presupuesto");
+    setPresupuestoIdSelected(p.id);
+    setClienteSelected(p.cliente_id);
+    setMensajeExito(null);
+    setMensajeError(null);
+    setShowEmision(true);
+  };
+
+  const iniciarFacturacionDesdeTickets = (clienteId: number) => {
+    setTipoFacturacion("tickets_caja");
+    setClienteSelected(clienteId);
+    setTicketsSelectedIds([]);
+    setMensajeExito(null);
+    setMensajeError(null);
+    setShowEmision(true);
   };
 
   const handleTipoFacturacionChange = (tipo: "directa" | "presupuesto" | "tickets_caja") => {
@@ -314,20 +344,32 @@ export default function ModuloFacturacion() {
     return { exento, imponible, iva, total };
   };
 
-  const facturasFiltradas = facturas.filter(f => 
+  const facturasFiltradas = facturas.filter(f =>
     f.nro_factura.includes(busqueda) ||
     f.cliente_nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
     f.cliente_rif.includes(busqueda)
   );
+
+  const ticketsPorCliente = ticketsPendientesTodos.reduce((acc, t) => {
+    if (!acc[t.cliente_id]) {
+      acc[t.cliente_id] = { cliente_id: t.cliente_id, cliente_nombre: t.cliente_nombre, cliente_rif: t.cliente_rif, cantidad: 0, total_usd: 0 };
+    }
+    acc[t.cliente_id].cantidad += 1;
+    acc[t.cliente_id].total_usd += Number(t.monto_usd);
+    return acc;
+  }, {} as Record<number, { cliente_id: number; cliente_nombre: string; cliente_rif: string; cantidad: number; total_usd: number }>);
+  const gruposTicketsPendientes = Object.values(ticketsPorCliente);
+
+  const hayPendientes = presupuestos.length > 0 || gruposTicketsPendientes.length > 0;
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h2 className="text-xl md:text-2xl font-black text-slate-900 tracking-tight">Facturación Fiscal SENIAT</h2>
+          <h2 className="text-xl md:text-2xl font-black text-slate-900 tracking-tight">Facturación</h2>
           <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mt-1">
-            Módulo Oficial de Emisión de Facturas y Control Correlativo Fiscal
+            Emisión de Facturas y Control Correlativo Fiscal
           </p>
         </div>
         <button
@@ -346,6 +388,63 @@ export default function ModuloFacturacion() {
         <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-700 text-xs font-bold flex items-center justify-between">
           <span>{mensajeExito}</span>
           <button onClick={() => setMensajeExito(null)} className="text-emerald-500 hover:text-emerald-700">✕</button>
+        </div>
+      )}
+
+      {/* Pendientes por Facturar: presupuestos y tickets de Caja/POS listos para convertirse en factura */}
+      {hayPendientes && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Presupuestos pendientes */}
+          {presupuestos.length > 0 && (
+            <div className="bg-white rounded-3xl border border-slate-100 shadow-xl overflow-hidden">
+              <div className="p-4 border-b border-slate-100 bg-amber-50/60">
+                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">🗺️ Presupuestos pendientes por facturar</h3>
+                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Cotizaciones listas para convertirse en factura fiscal</p>
+              </div>
+              <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                {presupuestos.map(p => (
+                  <div key={p.id} className="flex items-center justify-between gap-3 p-3.5 hover:bg-slate-50/60">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-800 truncate">{p.cliente_nombre}</p>
+                      <p className="text-[10px] text-slate-400 font-semibold">{p.cliente_rif} · {new Date(p.created_at).toLocaleDateString()} · ${Number(p.total_usd).toFixed(2)}</p>
+                    </div>
+                    <button
+                      onClick={() => iniciarFacturacionDesdePresupuesto(p)}
+                      className="shrink-0 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold px-3.5 py-2 transition-all cursor-pointer"
+                    >
+                      Facturar →
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Tickets de Caja/POS pendientes, agrupados por cliente */}
+          {gruposTicketsPendientes.length > 0 && (
+            <div className="bg-white rounded-3xl border border-slate-100 shadow-xl overflow-hidden">
+              <div className="p-4 border-b border-slate-100 bg-sky-50/60">
+                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">🛒 Tickets de Caja/POS pendientes por facturar</h3>
+                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Ventas procesadas en Caja aún sin formalizar en factura</p>
+              </div>
+              <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                {gruposTicketsPendientes.map(g => (
+                  <div key={g.cliente_id} className="flex items-center justify-between gap-3 p-3.5 hover:bg-slate-50/60">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-800 truncate">{g.cliente_nombre}</p>
+                      <p className="text-[10px] text-slate-400 font-semibold">{g.cliente_rif} · {g.cantidad} ticket{g.cantidad !== 1 ? "s" : ""} · ${g.total_usd.toFixed(2)}</p>
+                    </div>
+                    <button
+                      onClick={() => iniciarFacturacionDesdeTickets(g.cliente_id)}
+                      className="shrink-0 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold px-3.5 py-2 transition-all cursor-pointer"
+                    >
+                      Facturar →
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -392,8 +491,8 @@ export default function ModuloFacturacion() {
                     <td className="px-5 py-4 font-semibold text-slate-500">{f.nro_control}</td>
                     <td className="px-5 py-4 font-semibold text-slate-700">{f.cliente_nombre}</td>
                     <td className="px-5 py-4 font-mono font-bold text-slate-500">{f.cliente_rif}</td>
-                    <td className="px-5 py-4 text-right font-black text-slate-900">${f.total_usd.toFixed(2)}</td>
-                    <td className="px-5 py-4 text-right font-bold text-brand-primary">{f.total_ves.toFixed(2)} Bs</td>
+                    <td className="px-5 py-4 text-right font-black text-slate-900">${Number(f.total_usd).toFixed(2)}</td>
+                    <td className="px-5 py-4 text-right font-bold text-brand-primary">{Number(f.total_ves).toFixed(2)} Bs</td>
                     <td className="px-5 py-4 text-slate-400 font-semibold">{new Date(f.created_at).toLocaleDateString()}</td>
                     <td className="px-5 py-4 text-center">
                       <button
@@ -419,7 +518,7 @@ export default function ModuloFacturacion() {
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h3 className="text-md font-black text-slate-900">Emisión de Factura Fiscal</h3>
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mt-0.5">SENIAT Regulación de Facturación</p>
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mt-0.5">Regulación de Facturación</p>
               </div>
               <button onClick={() => setShowEmision(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
             </div>
@@ -483,7 +582,7 @@ export default function ModuloFacturacion() {
                     <option value="">-- Presupuestos pendientes --</option>
                     {presupuestos.map(p => (
                       <option key={p.id} value={p.id}>
-                        {p.cliente_nombre} ({p.cliente_rif}) - ${p.total_usd.toFixed(2)} - {new Date(p.created_at).toLocaleDateString()}
+                        {p.cliente_nombre} ({p.cliente_rif}) - ${Number(p.total_usd).toFixed(2)} - {new Date(p.created_at).toLocaleDateString()}
                       </option>
                     ))}
                   </select>
@@ -538,9 +637,9 @@ export default function ModuloFacturacion() {
                           />
                           <div className="flex-1">
                             <p className="font-bold text-slate-800">{t.producto_nombre}</p>
-                            <p className="text-[10px] text-slate-400 font-semibold">{t.peso.toFixed(3)} kg - {new Date(t.created_at).toLocaleDateString()}</p>
+                            <p className="text-[10px] text-slate-400 font-semibold">{Number(t.peso).toFixed(3)} kg - {new Date(t.created_at).toLocaleDateString()}</p>
                           </div>
-                          <span className="font-black text-slate-900">${t.monto_usd.toFixed(2)}</span>
+                          <span className="font-black text-slate-900">${Number(t.monto_usd).toFixed(2)}</span>
                         </label>
                       ))
                     )}
@@ -769,10 +868,10 @@ export default function ModuloFacturacion() {
                   {viewingFactura.items.map(item => (
                     <tr key={item.id} className="align-middle">
                       <td className="py-2.5 font-bold text-slate-800">{item.producto_nombre || "Producto de Catálogo"}</td>
-                      <td className="py-2.5 text-right font-semibold">{item.cantidad.toFixed(3)}</td>
-                      <td className="py-2.5 text-right font-semibold">${item.precio_unitario_usd.toFixed(2)}</td>
+                      <td className="py-2.5 text-right font-semibold">{Number(item.cantidad).toFixed(3)}</td>
+                      <td className="py-2.5 text-right font-semibold">${Number(item.precio_unitario_usd).toFixed(2)}</td>
                       <td className="py-2.5 text-center font-bold text-[9px] text-slate-500">{item.aplica_iva ? "16%" : "Exento"}</td>
-                      <td className="py-2.5 text-right font-black">${item.subtotal_usd.toFixed(2)}</td>
+                      <td className="py-2.5 text-right font-black">${Number(item.subtotal_usd).toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -782,26 +881,26 @@ export default function ModuloFacturacion() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col justify-end text-[9px] text-slate-400 leading-normal">
                   <p className="font-semibold text-slate-500">Monto equivalente en Bolívares (VES)</p>
-                  <p className="font-black text-brand-primary text-xs mt-0.5">{viewingFactura.total_ves.toFixed(2)} Bs</p>
-                  <p className="mt-2 font-bold uppercase tracking-wider">Tasa BCV de Referencia: {viewingFactura.tasa_bcv.toFixed(2)} Bs/USD</p>
+                  <p className="font-black text-brand-primary text-xs mt-0.5">{Number(viewingFactura.total_ves).toFixed(2)} Bs</p>
+                  <p className="mt-2 font-bold uppercase tracking-wider">Tasa BCV de Referencia: {Number(viewingFactura.tasa_bcv).toFixed(2)} Bs/USD</p>
                   <p className="italic text-[8px] mt-1">"Operación gravada y exenta calculada de acuerdo con el Art. 25 de la Ley del IVA vigente en Venezuela."</p>
                 </div>
                 <div className="space-y-1.5 text-right border-l pl-4 border-slate-200">
                   <div className="flex justify-between font-semibold">
                     <span>Subtotal Exento (USD):</span>
-                    <span>${viewingFactura.monto_exento_usd.toFixed(2)}</span>
+                    <span>${Number(viewingFactura.monto_exento_usd).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between font-semibold">
                     <span>Base Imponible (USD):</span>
-                    <span>${viewingFactura.monto_imponible_usd.toFixed(2)}</span>
+                    <span>${Number(viewingFactura.monto_imponible_usd).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between font-semibold">
                     <span>IVA 16.00% (USD):</span>
-                    <span>${viewingFactura.monto_iva_usd.toFixed(2)}</span>
+                    <span>${Number(viewingFactura.monto_iva_usd).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between font-black text-slate-900 text-xs pt-1.5 border-t border-slate-300">
                     <span>TOTAL FACTURA (USD):</span>
-                    <span>${viewingFactura.total_usd.toFixed(2)}</span>
+                    <span>${Number(viewingFactura.total_usd).toFixed(2)}</span>
                   </div>
                 </div>
               </div>
