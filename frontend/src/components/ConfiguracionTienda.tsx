@@ -31,6 +31,28 @@ interface EmpresaConfigLite {
   logo_url: string | null;
 }
 
+type ModalidadFacturacion = "imprenta" | "maquina_fiscal";
+
+interface ConfigFacturacionFiscal {
+  modalidad_facturacion: ModalidadFacturacion;
+  imprenta_nombre: string;
+  imprenta_rif: string;
+  imprenta_nro_providencia: string;
+  imprenta_fecha_providencia: string;
+  imprenta_control_desde: string;
+  imprenta_control_hasta: string;
+}
+
+const FACTURACION_FISCAL_DEFAULT: ConfigFacturacionFiscal = {
+  modalidad_facturacion: "imprenta",
+  imprenta_nombre: "",
+  imprenta_rif: "",
+  imprenta_nro_providencia: "",
+  imprenta_fecha_providencia: "",
+  imprenta_control_desde: "",
+  imprenta_control_hasta: "",
+};
+
 interface TasaData { valor_bcv: number; valor_eur: number | null; fecha_actualizacion: string; }
 
 export default function ConfiguracionTienda() {
@@ -58,11 +80,14 @@ export default function ConfiguracionTienda() {
     agente_alo_modelo: "claude-3-5-haiku-20241022",
     agente_alo_temperatura: 0.2,
   });
+  const [facturacionFiscal, setFacturacionFiscal] = useState<ConfigFacturacionFiscal>(FACTURACION_FISCAL_DEFAULT);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [guardandoAgentes, setGuardandoAgentes] = useState(false);
+  const [guardandoFiscal, setGuardandoFiscal] = useState(false);
   const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   const [mensajeAgentes, setMensajeAgentes] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+  const [mensajeFiscal, setMensajeFiscal] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
 
   useEffect(() => {
     apiClient.get<TasaData>("/api/v1/tasa").then((res) => {
@@ -121,6 +146,18 @@ export default function ConfiguracionTienda() {
         agente_alo_modelo: data.agente_alo_modelo ?? "claude-3-5-haiku-20241022",
         agente_alo_temperatura: data.agente_alo_temperatura ?? 0.2,
       });
+      if (data.config_facturacion_fiscal) {
+        const f = data.config_facturacion_fiscal;
+        setFacturacionFiscal({
+          modalidad_facturacion: f.modalidad_facturacion,
+          imprenta_nombre: f.imprenta_nombre ?? "",
+          imprenta_rif: f.imprenta_rif ?? "",
+          imprenta_nro_providencia: f.imprenta_nro_providencia ?? "",
+          imprenta_fecha_providencia: f.imprenta_fecha_providencia ?? "",
+          imprenta_control_desde: f.imprenta_control_desde != null ? String(f.imprenta_control_desde) : "",
+          imprenta_control_hasta: f.imprenta_control_hasta != null ? String(f.imprenta_control_hasta) : "",
+        });
+      }
       setCargando(false);
     }).catch(() => setCargando(false));
     return () => { activo = false; };
@@ -151,6 +188,45 @@ export default function ConfiguracionTienda() {
       setMensaje({ tipo: "error", texto: err?.response?.data?.detail || "No se pudo guardar la configuración." });
     } finally {
       setGuardando(false);
+    }
+  }
+
+  function updateFiscal<K extends keyof ConfigFacturacionFiscal>(key: K, value: ConfigFacturacionFiscal[K]) {
+    setFacturacionFiscal((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function guardarFacturacionFiscal() {
+    setGuardandoFiscal(true);
+    setMensajeFiscal(null);
+    try {
+      if (facturacionFiscal.modalidad_facturacion === "imprenta") {
+        const desde = Number(facturacionFiscal.imprenta_control_desde);
+        const hasta = Number(facturacionFiscal.imprenta_control_hasta);
+        if (!facturacionFiscal.imprenta_nombre.trim() || !facturacionFiscal.imprenta_rif.trim()) {
+          setMensajeFiscal({ tipo: "error", texto: "Indique el nombre y RIF de la imprenta autorizada." });
+          setGuardandoFiscal(false);
+          return;
+        }
+        if (!desde || !hasta || desde <= 0 || hasta <= 0 || desde > hasta) {
+          setMensajeFiscal({ tipo: "error", texto: "El rango de Números de Control asignado por la imprenta es inválido." });
+          setGuardandoFiscal(false);
+          return;
+        }
+      }
+      await apiClient.put("/api/v1/empresa/config-facturacion-fiscal", {
+        modalidad_facturacion: facturacionFiscal.modalidad_facturacion,
+        imprenta_nombre: facturacionFiscal.imprenta_nombre || null,
+        imprenta_rif: facturacionFiscal.imprenta_rif || null,
+        imprenta_nro_providencia: facturacionFiscal.imprenta_nro_providencia || null,
+        imprenta_fecha_providencia: facturacionFiscal.imprenta_fecha_providencia || null,
+        imprenta_control_desde: facturacionFiscal.imprenta_control_desde ? Number(facturacionFiscal.imprenta_control_desde) : null,
+        imprenta_control_hasta: facturacionFiscal.imprenta_control_hasta ? Number(facturacionFiscal.imprenta_control_hasta) : null,
+      });
+      setMensajeFiscal({ tipo: "ok", texto: "Configuración de facturación fiscal guardada con éxito." });
+    } catch (err: any) {
+      setMensajeFiscal({ tipo: "error", texto: err?.response?.data?.detail || "No se pudo guardar la configuración fiscal." });
+    } finally {
+      setGuardandoFiscal(false);
     }
   }
 
@@ -335,6 +411,134 @@ export default function ConfiguracionTienda() {
           />
         </section>
       </div>
+
+      {/* --- Facturación Fiscal (homologación SENIAT) --- */}
+      <section className="rounded-3xl border border-slate-100/80 bg-white p-6 shadow-sm space-y-5">
+        <div>
+          <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">📋 Facturación Fiscal</h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            El Número de Control de una factura no lo genera este sistema: debe corresponder al formato homologado
+            ante el SENIAT que utilice tu negocio. Elige cuál aplica.
+          </p>
+        </div>
+
+        {mensajeFiscal && (
+          <p className={`text-sm font-medium px-3 py-2 rounded-xl ${mensajeFiscal.tipo === "ok" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+            {mensajeFiscal.texto}
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => updateFiscal("modalidad_facturacion", "imprenta")}
+            className={`text-left p-4 rounded-2xl border transition-all ${
+              facturacionFiscal.modalidad_facturacion === "imprenta"
+                ? "bg-slate-900 border-slate-900 text-white"
+                : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <span className="block text-xs font-black uppercase tracking-wider">🖨️ Formas Pre-impresas</span>
+            <span className="block text-[11px] mt-1 opacity-80">Imprenta autorizada por el SENIAT. El Nro. de Control viene fijo en el papel.</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => updateFiscal("modalidad_facturacion", "maquina_fiscal")}
+            className={`text-left p-4 rounded-2xl border transition-all ${
+              facturacionFiscal.modalidad_facturacion === "maquina_fiscal"
+                ? "bg-slate-900 border-slate-900 text-white"
+                : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <span className="block text-xs font-black uppercase tracking-wider">🧾 Máquina Fiscal</span>
+            <span className="block text-[11px] mt-1 opacity-80">Impresora fiscal certificada. Se registra el comprobante que ella emite.</span>
+          </button>
+        </div>
+
+        {facturacionFiscal.modalidad_facturacion === "imprenta" && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+            <label className="flex flex-col">
+              <span className={labelCls}>Nombre de la Imprenta Autorizada</span>
+              <input
+                type="text"
+                className={inputCls}
+                value={facturacionFiscal.imprenta_nombre}
+                onChange={(e) => updateFiscal("imprenta_nombre", e.target.value)}
+                placeholder="Ej. Imprenta El Sol C.A."
+              />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>RIF de la Imprenta</span>
+              <input
+                type="text"
+                className={inputCls}
+                value={facturacionFiscal.imprenta_rif}
+                onChange={(e) => updateFiscal("imprenta_rif", e.target.value)}
+                placeholder="J-30111222-3"
+              />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>N° de Providencia Administrativa</span>
+              <input
+                type="text"
+                className={inputCls}
+                value={facturacionFiscal.imprenta_nro_providencia}
+                onChange={(e) => updateFiscal("imprenta_nro_providencia", e.target.value)}
+                placeholder="SNAT/2011/00071"
+              />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Fecha de la Providencia</span>
+              <input
+                type="date"
+                className={inputCls}
+                value={facturacionFiscal.imprenta_fecha_providencia}
+                onChange={(e) => updateFiscal("imprenta_fecha_providencia", e.target.value)}
+              />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Rango de Control Asignado — Desde</span>
+              <input
+                type="number"
+                min="1"
+                className={inputCls}
+                value={facturacionFiscal.imprenta_control_desde}
+                onChange={(e) => updateFiscal("imprenta_control_desde", e.target.value)}
+                placeholder="1"
+              />
+            </label>
+            <label className="flex flex-col">
+              <span className={labelCls}>Rango de Control Asignado — Hasta</span>
+              <input
+                type="number"
+                min="1"
+                className={inputCls}
+                value={facturacionFiscal.imprenta_control_hasta}
+                onChange={(e) => updateFiscal("imprenta_control_hasta", e.target.value)}
+                placeholder="50000"
+              />
+            </label>
+          </div>
+        )}
+
+        {facturacionFiscal.modalidad_facturacion === "maquina_fiscal" && (
+          <p className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-2xl p-3">
+            Por ahora, al emitir una factura registrarás manualmente el Número de Comprobante Fiscal que tu impresora
+            fiscal ya emitió en papel. La integración directa con el hardware se agregará cuando definas la marca/modelo del equipo.
+          </p>
+        )}
+
+        <div className="flex justify-end pt-2">
+          <button
+            type="button"
+            onClick={guardarFacturacionFiscal}
+            disabled={guardandoFiscal}
+            className="rounded-2xl bg-slate-900 px-6 py-2.5 text-sm font-bold text-white shadow-sm transition-all duration-300 hover:bg-slate-700 hover:shadow-md disabled:bg-slate-400"
+          >
+            {guardandoFiscal ? "Guardando..." : "Guardar Facturación Fiscal"}
+          </button>
+        </div>
+      </section>
 
       {/* --- Ajustes Avanzados de Guías de IA --- */}
       <section className="rounded-3xl border border-slate-100/80 bg-white p-6 shadow-sm space-y-6">

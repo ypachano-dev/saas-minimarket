@@ -91,6 +91,12 @@ export default function ModuloFacturacion() {
   
   const [presupuestoIdSelected, setPresupuestoIdSelected] = useState<number | "">("");
   const [ticketsSelectedIds, setTicketsSelectedIds] = useState<number[]>([]);
+  const [nroControlManual, setNroControlManual] = useState("");
+  const [configFiscal, setConfigFiscal] = useState<{
+    modalidad_facturacion: "imprenta" | "maquina_fiscal";
+    imprenta_control_desde: number | null;
+    imprenta_control_hasta: number | null;
+  }>({ modalidad_facturacion: "imprenta", imprenta_control_desde: null, imprenta_control_hasta: null });
   
   // Direct billing items
   const [itemsDirectos, setItemsDirectos] = useState<{
@@ -110,6 +116,7 @@ export default function ModuloFacturacion() {
     cargarClientes();
     cargarProductos();
     cargarTasa();
+    cargarConfigFiscal();
     cargarPresupuestosDisponibles();
     cargarTicketsPendientesTodos();
   }, []);
@@ -163,6 +170,22 @@ export default function ModuloFacturacion() {
     }
   };
 
+  const cargarConfigFiscal = async () => {
+    try {
+      const { data } = await apiClient.get("/api/v1/empresa/mi-config");
+      const f = data?.config_facturacion_fiscal;
+      if (f) {
+        setConfigFiscal({
+          modalidad_facturacion: f.modalidad_facturacion,
+          imprenta_control_desde: f.imprenta_control_desde ?? null,
+          imprenta_control_hasta: f.imprenta_control_hasta ?? null,
+        });
+      }
+    } catch (err) {
+      console.error("Error cargando configuración fiscal", err);
+    }
+  };
+
   const cargarPresupuestosDisponibles = async () => {
     try {
       const { data } = await apiClient.get<PresupuestoDisponible[]>("/api/v1/facturas-presupuestos-disponibles");
@@ -194,6 +217,7 @@ export default function ModuloFacturacion() {
     setTipoFacturacion("presupuesto");
     setPresupuestoIdSelected(p.id);
     setClienteSelected(p.cliente_id);
+    setNroControlManual("");
     setMensajeExito(null);
     setMensajeError(null);
     setShowEmision(true);
@@ -203,6 +227,7 @@ export default function ModuloFacturacion() {
     setTipoFacturacion("tickets_caja");
     setClienteSelected(clienteId);
     setTicketsSelectedIds([]);
+    setNroControlManual("");
     setMensajeExito(null);
     setMensajeError(null);
     setShowEmision(true);
@@ -269,9 +294,20 @@ export default function ModuloFacturacion() {
       return;
     }
 
+    if (!nroControlManual.trim()) {
+      setMensajeError(
+        configFiscal.modalidad_facturacion === "imprenta"
+          ? "Debe indicar el Número de Control del formato pre-impreso."
+          : "Debe indicar el Número de Comprobante Fiscal emitido por la máquina."
+      );
+      setCargando(false);
+      return;
+    }
+
     const payload: any = {
       cliente_id: Number(clienteSelected),
-      items: []
+      items: [],
+      nro_control_manual: nroControlManual.trim(),
     };
 
     if (tipoFacturacion === "presupuesto") {
@@ -318,7 +354,10 @@ export default function ModuloFacturacion() {
       setPresupuestoIdSelected("");
       setTicketsSelectedIds([]);
       setItemsDirectos([]);
+      setNroControlManual("");
       cargarFacturas();
+      cargarPresupuestosDisponibles();
+      cargarTicketsPendientesTodos();
     } catch (err: any) {
       console.error(err);
       setMensajeError(err.response?.data?.detail || "Ocurrió un error al emitir la factura fiscal.");
@@ -374,6 +413,8 @@ export default function ModuloFacturacion() {
         </div>
         <button
           onClick={() => {
+            setTipoFacturacion("directa");
+            setNroControlManual("");
             setShowEmision(true);
             setMensajeExito(null);
             setMensajeError(null);
@@ -568,6 +609,31 @@ export default function ModuloFacturacion() {
                   🛒 Desde Caja / POS
                 </button>
               </div>
+
+              {/* Nro. de Control: SIEMPRE manual, según la modalidad fiscal configurada en Configuración */}
+              <label className="flex flex-col">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  {configFiscal.modalidad_facturacion === "imprenta" ? "Número de Control (formato pre-impreso)" : "Número de Comprobante Fiscal (impresora fiscal)"}
+                </span>
+                <input
+                  type="text"
+                  value={nroControlManual}
+                  onChange={(e) => setNroControlManual(e.target.value)}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold focus:outline-none bg-slate-50"
+                  placeholder={configFiscal.modalidad_facturacion === "imprenta" ? "00-00000001" : "Nro. emitido por la máquina fiscal"}
+                  required
+                />
+                {configFiscal.modalidad_facturacion === "imprenta" && configFiscal.imprenta_control_desde != null && configFiscal.imprenta_control_hasta != null && (
+                  <span className="text-[10px] text-slate-400 mt-1">
+                    Rango asignado por la imprenta: {String(configFiscal.imprenta_control_desde).padStart(8, "0")} – {String(configFiscal.imprenta_control_hasta).padStart(8, "0")}
+                  </span>
+                )}
+                {configFiscal.modalidad_facturacion === "imprenta" && (configFiscal.imprenta_control_desde == null || configFiscal.imprenta_control_hasta == null) && (
+                  <span className="text-[10px] text-rose-500 mt-1">
+                    Aún no configuraste el rango de tu imprenta autorizada en Configuración.
+                  </span>
+                )}
+              </label>
 
               {/* Contenido Dinámico según Origen */}
               {tipoFacturacion === "presupuesto" && (

@@ -42,8 +42,10 @@ from app.schemas import (
     UsuarioCreate, UsuarioUpdate, UsuarioResponse, UsuarioGpsUpdate, VendedorUbicacionResponse,
     EmpresaConfigResponse, NomenclaturaNegocioResponse, TicketConfigResponse,
     TicketConfigUpdate, AgentesIAUpdate,
+    ConfigFacturacionFiscalResponse, ConfigFacturacionFiscalUpdate,
     SincronizacionLoteRequest, SincronizacionLoteResponse, SincronizacionResultado
 )
+from app.core.facturacion_config import normalizar_modalidad_facturacion
 
 logger = logging.getLogger("app")
 router = APIRouter()
@@ -375,6 +377,15 @@ def obtener_mi_config_empresa(db: Session = Depends(get_db), usuario_actual: Tok
             texto_cabecera=empresa.ticket_texto_cabecera, texto_pie=empresa.ticket_texto_pie,
             desglosar_impuestos=empresa.ticket_desglosar_impuestos,
         ),
+        config_facturacion_fiscal=ConfigFacturacionFiscalResponse(
+            modalidad_facturacion=normalizar_modalidad_facturacion(empresa.modalidad_facturacion),
+            imprenta_nombre=empresa.imprenta_nombre,
+            imprenta_rif=empresa.imprenta_rif,
+            imprenta_nro_providencia=empresa.imprenta_nro_providencia,
+            imprenta_fecha_providencia=empresa.imprenta_fecha_providencia,
+            imprenta_control_desde=empresa.imprenta_control_desde,
+            imprenta_control_hasta=empresa.imprenta_control_hasta,
+        ),
     )
 
 
@@ -471,6 +482,50 @@ def actualizar_config_agentes(datos: AgentesIAUpdate, db: Session = Depends(get_
             texto_cabecera=empresa.ticket_texto_cabecera, texto_pie=empresa.ticket_texto_pie,
             desglosar_impuestos=empresa.ticket_desglosar_impuestos,
         ),
+        config_facturacion_fiscal=ConfigFacturacionFiscalResponse(
+            modalidad_facturacion=normalizar_modalidad_facturacion(empresa.modalidad_facturacion),
+            imprenta_nombre=empresa.imprenta_nombre,
+            imprenta_rif=empresa.imprenta_rif,
+            imprenta_nro_providencia=empresa.imprenta_nro_providencia,
+            imprenta_fecha_providencia=empresa.imprenta_fecha_providencia,
+            imprenta_control_desde=empresa.imprenta_control_desde,
+            imprenta_control_hasta=empresa.imprenta_control_hasta,
+        ),
+    )
+
+
+@router.put("/api/v1/empresa/config-facturacion-fiscal", tags=["Empresa"], response_model=ConfigFacturacionFiscalResponse)
+def actualizar_config_facturacion_fiscal(datos: ConfigFacturacionFiscalUpdate, db: Session = Depends(get_db), usuario_actual: TokenData = Depends(verificar_rol(ROLES_GESTION))) -> ConfigFacturacionFiscalResponse:
+    empresa = db.query(Empresa).filter(Empresa.id == usuario_actual.eid).first()
+    if not empresa:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada.")
+    if datos.modalidad_facturacion is not None:
+        empresa.modalidad_facturacion = datos.modalidad_facturacion
+    if datos.imprenta_nombre is not None:
+        empresa.imprenta_nombre = datos.imprenta_nombre
+    if datos.imprenta_rif is not None:
+        empresa.imprenta_rif = datos.imprenta_rif
+    if datos.imprenta_nro_providencia is not None:
+        empresa.imprenta_nro_providencia = datos.imprenta_nro_providencia
+    if datos.imprenta_fecha_providencia is not None:
+        empresa.imprenta_fecha_providencia = datos.imprenta_fecha_providencia
+    if datos.imprenta_control_desde is not None:
+        empresa.imprenta_control_desde = datos.imprenta_control_desde
+    if datos.imprenta_control_hasta is not None:
+        empresa.imprenta_control_hasta = datos.imprenta_control_hasta
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se pudo guardar la configuración de facturación fiscal.")
+    return ConfigFacturacionFiscalResponse(
+        modalidad_facturacion=normalizar_modalidad_facturacion(empresa.modalidad_facturacion),
+        imprenta_nombre=empresa.imprenta_nombre,
+        imprenta_rif=empresa.imprenta_rif,
+        imprenta_nro_providencia=empresa.imprenta_nro_providencia,
+        imprenta_fecha_providencia=empresa.imprenta_fecha_providencia,
+        imprenta_control_desde=empresa.imprenta_control_desde,
+        imprenta_control_hasta=empresa.imprenta_control_hasta,
     )
 
 

@@ -22,6 +22,7 @@ from app.models.orden_venta import OrdenVenta
 from app.models.ticket import Ticket
 from app.models.empresa import Empresa
 from app.schemas import TokenData, FacturaCreate, FacturaResponse, FacturaItemResponse
+from app.core.facturacion_config import ModalidadFacturacion, normalizar_modalidad_facturacion
 
 logger = logging.getLogger("app")
 router = APIRouter()
@@ -42,15 +43,49 @@ def crear_factura(datos: FacturaCreate, db: Session = Depends(get_db), usuario_a
     if not cliente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
 
+    empresa = db.query(Empresa).filter(Empresa.id == usuario_actual.eid).first()
+    if not empresa:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada.")
+    modalidad = normalizar_modalidad_facturacion(empresa.modalidad_facturacion)
+
     tasa = db.query(TasaCambio).filter(TasaCambio.empresa_id == usuario_actual.eid).first()
     if not tasa:
         raise HTTPException(status_code=400, detail="Debe configurar la tasa de cambio BCV antes de facturar.")
     tasa_bcv = tasa.valor_bcv
 
-    # Determinar correlativos secuenciales de Factura y Control para esta empresa
+    # El Nro. de Control NUNCA lo genera el software: en modalidad "imprenta" debe
+    # coincidir con el formato pre-impreso por la imprenta autorizada (dentro del
+    # rango asignado); en "maquina_fiscal" es el comprobante que ya emitió la
+    # impresora fiscal. El Nro. de Factura (uso interno) sí sigue siendo correlativo.
+    nro_control_manual = (datos.nro_control_manual or "").strip()
+    if not nro_control_manual:
+        raise HTTPException(status_code=400, detail="Debe indicar el Número de Control de la factura fiscal.")
+
+    if modalidad == ModalidadFacturacion.IMPRENTA:
+        if not empresa.imprenta_control_desde or not empresa.imprenta_control_hasta:
+            raise HTTPException(
+                status_code=400,
+                detail="Configure primero el rango de Números de Control asignado por su imprenta autorizada, en Configuración.",
+            )
+        digitos = "".join(ch for ch in nro_control_manual if ch.isdigit())
+        if not digitos:
+            raise HTTPException(status_code=400, detail="El Número de Control indicado no es válido.")
+        valor_numerico = int(digitos)
+        if not (empresa.imprenta_control_desde <= valor_numerico <= empresa.imprenta_control_hasta):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El Número de Control debe estar dentro del rango asignado por la imprenta ({empresa.imprenta_control_desde:08d} - {empresa.imprenta_control_hasta:08d}).",
+            )
+
+    ya_usado = db.query(Factura).filter(Factura.empresa_id == usuario_actual.eid, Factura.nro_control == nro_control_manual).first()
+    if ya_usado:
+        raise HTTPException(status_code=400, detail="Ese Número de Control ya fue utilizado en otra factura.")
+
+    nro_control = nro_control_manual
+
+    # Nro. de Factura: correlativo interno de uso administrativo (no fiscal)
     cant_facturas = db.query(func.count(Factura.id)).filter(Factura.empresa_id == usuario_actual.eid).scalar() or 0
     nro_factura = f"{cant_facturas + 1:08d}"
-    nro_control = f"00-{cant_facturas + 1:08d}"
 
     # Estructuras para acumular montos SENIAT
     monto_exento_usd = Decimal("0.00")
@@ -141,6 +176,7 @@ def crear_factura(datos: FacturaCreate, db: Session = Depends(get_db), usuario_a
             cliente_id=datos.cliente_id,
             nro_factura=nro_factura,
             nro_control=nro_control,
+            modalidad_facturacion=modalidad.value,
             cliente_nombre=cliente.nombre,
             cliente_rif=cliente.cedula,
             cliente_direccion=cliente.direccion,
@@ -267,6 +303,7 @@ def crear_factura(datos: FacturaCreate, db: Session = Depends(get_db), usuario_a
         cliente_id=nueva_factura.cliente_id,
         nro_factura=nueva_factura.nro_factura,
         nro_control=nueva_factura.nro_control,
+        modalidad_facturacion=nueva_factura.modalidad_facturacion,
         cliente_nombre=nueva_factura.cliente_nombre,
         cliente_rif=nueva_factura.cliente_rif,
         cliente_direccion=nueva_factura.cliente_direccion,
@@ -307,6 +344,7 @@ def listar_facturas(db: Session = Depends(get_db), usuario_actual: TokenData = D
             cliente_id=f.cliente_id,
             nro_factura=f.nro_factura,
             nro_control=f.nro_control,
+            modalidad_facturacion=f.modalidad_facturacion,
             cliente_nombre=f.cliente_nombre,
             cliente_rif=f.cliente_rif,
             cliente_direccion=f.cliente_direccion,
@@ -349,6 +387,7 @@ def obtener_factura(id: int, db: Session = Depends(get_db), usuario_actual: Toke
         cliente_id=f.cliente_id,
         nro_factura=f.nro_factura,
         nro_control=f.nro_control,
+        modalidad_facturacion=f.modalidad_facturacion,
         cliente_nombre=f.cliente_nombre,
         cliente_rif=f.cliente_rif,
         cliente_direccion=f.cliente_direccion,

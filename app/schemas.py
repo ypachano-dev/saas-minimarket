@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Dict, List, Optional
 from app.core.negocio_config import TipoNegocio
 from app.core.ticket_config import TicketTamanoPapel
+from app.core.facturacion_config import ModalidadFacturacion
 from app.core.caja_config import EstadoTurno
 
 class RegistroEmpresaAdmin(BaseModel):
@@ -101,6 +102,7 @@ class EmpresaConfigResponse(BaseModel):
     agente_alo_incluido: bool = False
 
     ticket_config: "TicketConfigResponse"
+    config_facturacion_fiscal: "ConfigFacturacionFiscalResponse"
 
 # Molde de salida con la plantilla de ticket de Caja vigente para el inquilino
 class TicketConfigResponse(BaseModel):
@@ -119,6 +121,28 @@ class TicketConfigUpdate(BaseModel):
     texto_cabecera: Optional[str] = None
     texto_pie: Optional[str] = None
     desglosar_impuestos: Optional[bool] = None
+
+# Molde de salida con la modalidad de homologación fiscal SENIAT vigente para
+# la Facturación (imprenta autorizada o máquina fiscal) y, si aplica, los
+# datos de la imprenta y el rango de Números de Control asignado.
+class ConfigFacturacionFiscalResponse(BaseModel):
+    modalidad_facturacion: ModalidadFacturacion
+    imprenta_nombre: Optional[str] = None
+    imprenta_rif: Optional[str] = None
+    imprenta_nro_providencia: Optional[str] = None
+    imprenta_fecha_providencia: Optional[str] = None
+    imprenta_control_desde: Optional[int] = None
+    imprenta_control_hasta: Optional[int] = None
+
+# Molde de entrada para actualizar la modalidad fiscal (todos los campos opcionales)
+class ConfigFacturacionFiscalUpdate(BaseModel):
+    modalidad_facturacion: Optional[ModalidadFacturacion] = None
+    imprenta_nombre: Optional[str] = None
+    imprenta_rif: Optional[str] = None
+    imprenta_nro_providencia: Optional[str] = None
+    imprenta_fecha_providencia: Optional[str] = None
+    imprenta_control_desde: Optional[int] = None
+    imprenta_control_hasta: Optional[int] = None
 
 # Molde de entrada para activar/desactivar las guías de IA (VALE/YHORGE/ALO) de una empresa ya existente
 class AgentesIAUpdate(BaseModel):
@@ -1546,6 +1570,11 @@ class FacturaCreate(BaseModel):
     items: List[FacturaItemCreate]
     presupuesto_id: Optional[int] = None
     ticket_ids: Optional[List[int]] = None
+    # Nro. de Control fiscal: SIEMPRE provisto manualmente por el cajero/facturador,
+    # ya sea leído del formato pre-impreso por la imprenta autorizada, o del
+    # comprobante ya emitido por la impresora/máquina fiscal. El software nunca
+    # lo autogenera (ver app/core/facturacion_config.py).
+    nro_control_manual: str
 
 class FacturaItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -1566,6 +1595,7 @@ class FacturaResponse(BaseModel):
     cliente_id: int
     nro_factura: str
     nro_control: str
+    modalidad_facturacion: Optional[str] = None
     cliente_nombre: str
     cliente_rif: str
     cliente_direccion: Optional[str] = None

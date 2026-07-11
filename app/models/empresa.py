@@ -1,9 +1,10 @@
 import datetime
-from sqlalchemy import String, Text, DateTime, Boolean, Enum as SAEnum, func, JSON, ForeignKey
+from sqlalchemy import String, Text, DateTime, Boolean, Enum as SAEnum, func, JSON, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 from app.core.negocio_config import TipoNegocio
 from app.core.ticket_config import TicketTamanoPapel
+from app.core.facturacion_config import ModalidadFacturacion
 
 class Empresa(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -72,6 +73,23 @@ class Empresa(Base):
     ticket_texto_cabecera: Mapped[str | None] = mapped_column(Text, nullable=True)
     ticket_texto_pie: Mapped[str | None] = mapped_column(Text, nullable=True)
     ticket_desglosar_impuestos: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Modalidad de homologación fiscal ante el SENIAT para la Facturación (no el
+    # ticket de Caja): el Nro. de Control de una factura debe venir de un formato
+    # pre-impreso por una imprenta autorizada, o de una impresora/máquina fiscal.
+    modalidad_facturacion: Mapped[ModalidadFacturacion] = mapped_column(
+        SAEnum(ModalidadFacturacion, values_callable=lambda e: [m.value for m in e], native_enum=False, length=20),
+        default=ModalidadFacturacion.IMPRENTA,
+        nullable=False,
+    )
+    # Datos de la imprenta autorizada (solo aplica si modalidad_facturacion == IMPRENTA)
+    imprenta_nombre: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    imprenta_rif: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    imprenta_nro_providencia: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    imprenta_fecha_providencia: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Rango de Números de Control asignado por la imprenta (solo la parte numérica)
+    imprenta_control_desde: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    imprenta_control_hasta: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     fecha_inicio: Mapped[str | None] = mapped_column(String(10), nullable=True)
     fecha_vencimiento: Mapped[str | None] = mapped_column(String(10), nullable=True)

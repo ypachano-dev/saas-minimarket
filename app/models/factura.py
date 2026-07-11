@@ -12,10 +12,16 @@ class Factura(Base):
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuario.id"), nullable=False)
     cliente_id: Mapped[int] = mapped_column(ForeignKey("cliente.id"), nullable=False)
     
-    # Nro de Factura (secuencial autogenerado por empresa)
+    # Nro de Factura (secuencial autogenerado por empresa, uso interno)
     nro_factura: Mapped[str] = mapped_column(String(50), nullable=False)
-    # Nro de Control (secuencial autogenerado por empresa, ej: 00-000001)
+    # Nro de Control fiscal: SIEMPRE provisto por el usuario (nunca autogenerado),
+    # ya que debe corresponder a un formato pre-impreso por una imprenta autorizada
+    # o a un comprobante emitido por una impresora/máquina fiscal.
     nro_control: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Modalidad de homologación fiscal vigente en la empresa al momento de emitir
+    # esta factura (congelada, igual que los datos del cliente): "imprenta" o
+    # "maquina_fiscal". Ver app/core/facturacion_config.py.
+    modalidad_facturacion: Mapped[str | None] = mapped_column(String(20), nullable=True)
     
     # Datos del cliente al momento de facturar (congelados según exigencia SENIAT)
     cliente_nombre: Mapped[str] = mapped_column(String(150), nullable=False)
