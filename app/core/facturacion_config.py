@@ -20,3 +20,30 @@ def normalizar_modalidad_facturacion(valor: "str | ModalidadFacturacion | None")
         return ModalidadFacturacion(valor)
     except ValueError:
         return ModalidadFacturacion.IMPRENTA
+
+
+class MarcaImpresoraFiscal(str, enum.Enum):
+    """Marcas de impresora/máquina fiscal comunes en Venezuela. Cada una usa un
+    protocolo/SDK propietario distinto (normalmente un DLL o puerto serial con
+    comandos propios del fabricante) — no existe un protocolo genérico único.
+    Ver app/integraciones/impresoras_fiscales.py para el estado real de cada driver."""
+    THE_FACTORY_HKA = "the_factory_hka"
+    HASLER = "hasler"
+    FIDELIO = "fidelio"
+    BEMOVA = "bemova"
+    PNP = "pnp"
+    ZEUS = "zeus"
+    OTRA = "otra"
+
+
+def normalizar_marca_impresora_fiscal(valor: "str | MarcaImpresoraFiscal | None") -> "MarcaImpresoraFiscal | None":
+    """A diferencia de la modalidad, aquí None es un valor legítimo: significa
+    que la empresa todavía no indicó qué marca de impresora fiscal tiene."""
+    if valor is None:
+        return None
+    if isinstance(valor, MarcaImpresoraFiscal):
+        return valor
+    try:
+        return MarcaImpresoraFiscal(valor)
+    except ValueError:
+        return None

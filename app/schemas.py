@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Dict, List, Optional
 from app.core.negocio_config import TipoNegocio
 from app.core.ticket_config import TicketTamanoPapel
-from app.core.facturacion_config import ModalidadFacturacion
+from app.core.facturacion_config import ModalidadFacturacion, MarcaImpresoraFiscal
 from app.core.caja_config import EstadoTurno
 
 class RegistroEmpresaAdmin(BaseModel):
@@ -133,6 +133,8 @@ class ConfigFacturacionFiscalResponse(BaseModel):
     imprenta_fecha_providencia: Optional[str] = None
     imprenta_control_desde: Optional[int] = None
     imprenta_control_hasta: Optional[int] = None
+    impresora_fiscal_marca: Optional[MarcaImpresoraFiscal] = None
+    impresora_fiscal_integracion_automatica: bool = False
 
 # Molde de entrada para actualizar la modalidad fiscal (todos los campos opcionales)
 class ConfigFacturacionFiscalUpdate(BaseModel):
@@ -143,6 +145,7 @@ class ConfigFacturacionFiscalUpdate(BaseModel):
     imprenta_fecha_providencia: Optional[str] = None
     imprenta_control_desde: Optional[int] = None
     imprenta_control_hasta: Optional[int] = None
+    impresora_fiscal_marca: Optional[MarcaImpresoraFiscal] = None
 
 # Molde de entrada para activar/desactivar las guías de IA (VALE/YHORGE/ALO) de una empresa ya existente
 class AgentesIAUpdate(BaseModel):

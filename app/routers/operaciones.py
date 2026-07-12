@@ -45,7 +45,8 @@ from app.schemas import (
     ConfigFacturacionFiscalResponse, ConfigFacturacionFiscalUpdate,
     SincronizacionLoteRequest, SincronizacionLoteResponse, SincronizacionResultado
 )
-from app.core.facturacion_config import normalizar_modalidad_facturacion
+from app.core.facturacion_config import normalizar_modalidad_facturacion, normalizar_marca_impresora_fiscal
+from app.integraciones.impresoras_fiscales import tiene_integracion_automatica
 
 logger = logging.getLogger("app")
 router = APIRouter()
@@ -385,6 +386,8 @@ def obtener_mi_config_empresa(db: Session = Depends(get_db), usuario_actual: Tok
             imprenta_fecha_providencia=empresa.imprenta_fecha_providencia,
             imprenta_control_desde=empresa.imprenta_control_desde,
             imprenta_control_hasta=empresa.imprenta_control_hasta,
+            impresora_fiscal_marca=normalizar_marca_impresora_fiscal(empresa.impresora_fiscal_marca),
+            impresora_fiscal_integracion_automatica=tiene_integracion_automatica(normalizar_marca_impresora_fiscal(empresa.impresora_fiscal_marca)),
         ),
     )
 
@@ -490,6 +493,8 @@ def actualizar_config_agentes(datos: AgentesIAUpdate, db: Session = Depends(get_
             imprenta_fecha_providencia=empresa.imprenta_fecha_providencia,
             imprenta_control_desde=empresa.imprenta_control_desde,
             imprenta_control_hasta=empresa.imprenta_control_hasta,
+            impresora_fiscal_marca=normalizar_marca_impresora_fiscal(empresa.impresora_fiscal_marca),
+            impresora_fiscal_integracion_automatica=tiene_integracion_automatica(normalizar_marca_impresora_fiscal(empresa.impresora_fiscal_marca)),
         ),
     )
 
@@ -513,11 +518,14 @@ def actualizar_config_facturacion_fiscal(datos: ConfigFacturacionFiscalUpdate, d
         empresa.imprenta_control_desde = datos.imprenta_control_desde
     if datos.imprenta_control_hasta is not None:
         empresa.imprenta_control_hasta = datos.imprenta_control_hasta
+    if datos.impresora_fiscal_marca is not None:
+        empresa.impresora_fiscal_marca = datos.impresora_fiscal_marca
     try:
         db.commit()
     except Exception:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se pudo guardar la configuración de facturación fiscal.")
+    marca_actual = normalizar_marca_impresora_fiscal(empresa.impresora_fiscal_marca)
     return ConfigFacturacionFiscalResponse(
         modalidad_facturacion=normalizar_modalidad_facturacion(empresa.modalidad_facturacion),
         imprenta_nombre=empresa.imprenta_nombre,
@@ -526,6 +534,8 @@ def actualizar_config_facturacion_fiscal(datos: ConfigFacturacionFiscalUpdate, d
         imprenta_fecha_providencia=empresa.imprenta_fecha_providencia,
         imprenta_control_desde=empresa.imprenta_control_desde,
         imprenta_control_hasta=empresa.imprenta_control_hasta,
+        impresora_fiscal_marca=marca_actual,
+        impresora_fiscal_integracion_automatica=tiene_integracion_automatica(marca_actual),
     )
 
 

@@ -32,6 +32,17 @@ interface EmpresaConfigLite {
 }
 
 type ModalidadFacturacion = "imprenta" | "maquina_fiscal";
+type MarcaImpresoraFiscal = "the_factory_hka" | "hasler" | "fidelio" | "bemova" | "pnp" | "zeus" | "otra";
+
+const MARCAS_IMPRESORA_FISCAL: { value: MarcaImpresoraFiscal; label: string }[] = [
+  { value: "the_factory_hka", label: "The Factory HKA" },
+  { value: "hasler", label: "Hasler" },
+  { value: "fidelio", label: "Fidelio" },
+  { value: "bemova", label: "Bemova" },
+  { value: "pnp", label: "PNP" },
+  { value: "zeus", label: "Zeus" },
+  { value: "otra", label: "Otra / no listada" },
+];
 
 interface ConfigFacturacionFiscal {
   modalidad_facturacion: ModalidadFacturacion;
@@ -41,12 +52,16 @@ interface ConfigFacturacionFiscal {
   imprenta_fecha_providencia: string;
   imprenta_control_desde: string;
   imprenta_control_hasta: string;
+  impresora_fiscal_marca: MarcaImpresoraFiscal | "";
+  impresora_fiscal_integracion_automatica: boolean;
 }
 
 const FACTURACION_FISCAL_DEFAULT: ConfigFacturacionFiscal = {
   modalidad_facturacion: "imprenta",
   imprenta_nombre: "",
   imprenta_rif: "",
+  impresora_fiscal_marca: "",
+  impresora_fiscal_integracion_automatica: false,
   imprenta_nro_providencia: "",
   imprenta_fecha_providencia: "",
   imprenta_control_desde: "",
@@ -156,6 +171,8 @@ export default function ConfiguracionTienda() {
           imprenta_fecha_providencia: f.imprenta_fecha_providencia ?? "",
           imprenta_control_desde: f.imprenta_control_desde != null ? String(f.imprenta_control_desde) : "",
           imprenta_control_hasta: f.imprenta_control_hasta != null ? String(f.imprenta_control_hasta) : "",
+          impresora_fiscal_marca: f.impresora_fiscal_marca ?? "",
+          impresora_fiscal_integracion_automatica: !!f.impresora_fiscal_integracion_automatica,
         });
       }
       setCargando(false);
@@ -221,6 +238,7 @@ export default function ConfiguracionTienda() {
         imprenta_fecha_providencia: facturacionFiscal.imprenta_fecha_providencia || null,
         imprenta_control_desde: facturacionFiscal.imprenta_control_desde ? Number(facturacionFiscal.imprenta_control_desde) : null,
         imprenta_control_hasta: facturacionFiscal.imprenta_control_hasta ? Number(facturacionFiscal.imprenta_control_hasta) : null,
+        impresora_fiscal_marca: facturacionFiscal.impresora_fiscal_marca || null,
       });
       setMensajeFiscal({ tipo: "ok", texto: "Configuración de facturación fiscal guardada con éxito." });
     } catch (err: any) {
@@ -522,10 +540,40 @@ export default function ConfiguracionTienda() {
         )}
 
         {facturacionFiscal.modalidad_facturacion === "maquina_fiscal" && (
-          <p className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-2xl p-3">
-            Por ahora, al emitir una factura registrarás manualmente el Número de Comprobante Fiscal que tu impresora
-            fiscal ya emitió en papel. La integración directa con el hardware se agregará cuando definas la marca/modelo del equipo.
-          </p>
+          <div className="space-y-3 pt-2 border-t border-slate-100">
+            <label className="flex flex-col sm:w-1/2">
+              <span className={labelCls}>Marca de tu Impresora/Máquina Fiscal</span>
+              <select
+                className={inputCls}
+                value={facturacionFiscal.impresora_fiscal_marca}
+                onChange={(e) => updateFiscal("impresora_fiscal_marca", e.target.value as MarcaImpresoraFiscal | "")}
+              >
+                <option value="">-- Selecciona la marca --</option>
+                {MARCAS_IMPRESORA_FISCAL.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+
+            {facturacionFiscal.impresora_fiscal_marca && (
+              <p className={`text-xs rounded-2xl p-3 border ${
+                facturacionFiscal.impresora_fiscal_integracion_automatica
+                  ? "bg-emerald-50 border-emerald-100 text-emerald-700"
+                  : "bg-amber-50 border-amber-100 text-amber-700"
+              }`}>
+                {facturacionFiscal.impresora_fiscal_integracion_automatica
+                  ? "✓ Esta marca ya tiene integración automática disponible."
+                  : "⏳ Integración automática con esta marca aún no disponible (requiere el SDK del fabricante y un agente instalado en la PC de caja). Por ahora, registrarás manualmente el Número de Comprobante Fiscal que la máquina ya imprimió."}
+              </p>
+            )}
+
+            {!facturacionFiscal.impresora_fiscal_marca && (
+              <p className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                Selecciona la marca de tu impresora fiscal. Mientras no haya integración automática para ella, registrarás
+                manualmente el Número de Comprobante Fiscal que la máquina ya imprimió en papel.
+              </p>
+            )}
+          </div>
         )}
 
         <div className="flex justify-end pt-2">

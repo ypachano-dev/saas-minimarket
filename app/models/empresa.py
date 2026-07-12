@@ -90,6 +90,9 @@ class Empresa(Base):
     # Rango de Números de Control asignado por la imprenta (solo la parte numérica)
     imprenta_control_desde: Mapped[int | None] = mapped_column(Integer, nullable=True)
     imprenta_control_hasta: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Marca de impresora/máquina fiscal (solo aplica si modalidad_facturacion == MAQUINA_FISCAL).
+    # Ver app/integraciones/impresoras_fiscales.py para el estado de integración real por marca.
+    impresora_fiscal_marca: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     fecha_inicio: Mapped[str | None] = mapped_column(String(10), nullable=True)
     fecha_vencimiento: Mapped[str | None] = mapped_column(String(10), nullable=True)
