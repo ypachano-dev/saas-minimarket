@@ -1089,12 +1089,14 @@ export default function ModuloBalanza() {
             </div>
           </section>
 
-          {/* PEDIDOS PENDIENTES EN BALANZA: SIEMPRE VISIBLE, INDEPENDIENTE DEL CLIENTE IDENTIFICADO */}
+          {/* TICKETS ACTIVOS: SIEMPRE VISIBLE, INDEPENDIENTE DEL CLIENTE IDENTIFICADO. Barra de píldoras
+              para saltar de un cliente a otro sin perder ningún ticket pendiente (varios empleados
+              atienden distintos clientes desde la misma estación). */}
           <section className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-bold text-slate-900">🎟️ Pedidos Pendientes en Balanza</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Todos los clientes con pesajes sin cobrar · se cancelan desde Caja</p>
+                <h3 className="text-lg font-bold text-slate-900">🎟️ Tickets Activos</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Clientes con pesajes sin cobrar · click para cambiar de cliente</p>
               </div>
               <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full">
                 {pendientesPorCliente.length} cliente(s)
@@ -1106,7 +1108,7 @@ export default function ModuloBalanza() {
             ) : pendientesPorCliente.length === 0 ? (
               <p className="text-xs text-slate-400 font-medium py-3">Ningún cliente tiene pesajes pendientes en este momento.</p>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
                 {pendientesPorCliente.map((p) => {
                   const esActivo = cliente?.id === p.cliente_id;
                   return (
@@ -1114,18 +1116,14 @@ export default function ModuloBalanza() {
                       key={p.cliente_id}
                       type="button"
                       onClick={() => atenderCliente(p.cliente_id)}
-                      className={`text-left p-3 rounded-2xl border transition-all ${
-                        esActivo ? "bg-blue-50 border-blue-200" : "bg-slate-50 hover:bg-slate-100 border-slate-200"
+                      className={`shrink-0 flex items-center gap-2 pl-3.5 pr-3 py-2 rounded-full border transition-all whitespace-nowrap ${
+                        esActivo ? "bg-blue-600 border-blue-600 text-white shadow-md" : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                       }`}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-slate-800 text-xs line-clamp-1">{p.cliente_nombre}</span>
-                        {esActivo && <span className="text-[9px] font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded-full shrink-0">Activo</span>}
-                      </div>
-                      <div className="flex items-center justify-between mt-1.5">
-                        <span className="text-[10px] text-slate-400 font-mono">{p.cantidad_tickets} ticket(s)</span>
-                        <span className="font-mono font-bold text-blue-600 text-sm">${fmt(p.monto_total)}</span>
-                      </div>
+                      <span className="font-bold text-xs">{p.cliente_nombre}</span>
+                      <span className={`text-[10px] font-mono ${esActivo ? "text-blue-100" : "text-slate-400"}`}>{p.cantidad_tickets} tk</span>
+                      <span className={`font-mono font-bold text-sm ${esActivo ? "text-white" : "text-blue-600"}`}>${fmt(p.monto_total)}</span>
+                      {esActivo && <span className="text-[9px] font-bold bg-white/20 px-1.5 py-0.5 rounded-full">Activo</span>}
                     </button>
                   );
                 })}
