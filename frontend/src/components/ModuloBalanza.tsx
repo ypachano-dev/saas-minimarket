@@ -1089,64 +1089,60 @@ export default function ModuloBalanza() {
             </div>
           </section>
 
-          {/* TICKETS ACTIVOS: SIEMPRE VISIBLE, INDEPENDIENTE DEL CLIENTE IDENTIFICADO. Barra de píldoras
-              para saltar de un cliente a otro sin perder ningún ticket pendiente (varios empleados
-              atienden distintos clientes desde la misma estación). */}
-          <section className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">🎟️ Tickets Activos</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Clientes con pesajes sin cobrar · click para cambiar de cliente</p>
-              </div>
-              <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full">
-                {pendientesPorCliente.length} cliente(s)
-              </span>
-            </div>
-
-            {cargandoPendientes && pendientesPorCliente.length === 0 ? (
-              <p className="text-xs text-slate-400 font-medium animate-pulse py-3">Cargando pedidos pendientes...</p>
-            ) : pendientesPorCliente.length === 0 ? (
-              <p className="text-xs text-slate-400 font-medium py-3">Ningún cliente tiene pesajes pendientes en este momento.</p>
-            ) : (
-              <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                {pendientesPorCliente.map((p) => {
-                  const esActivo = cliente?.id === p.cliente_id;
-                  return (
-                    <button
-                      key={p.cliente_id}
-                      type="button"
-                      onClick={() => atenderCliente(p.cliente_id)}
-                      className={`shrink-0 flex items-center gap-2 pl-3.5 pr-3 py-2 rounded-full border transition-all whitespace-nowrap ${
-                        esActivo ? "bg-blue-600 border-blue-600 text-white shadow-md" : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                      }`}
-                    >
-                      <span className="font-bold text-xs">{p.cliente_nombre}</span>
-                      <span className={`text-[10px] font-mono ${esActivo ? "text-blue-100" : "text-slate-400"}`}>{p.cantidad_tickets} tk</span>
-                      <span className={`font-mono font-bold text-sm ${esActivo ? "text-white" : "text-blue-600"}`}>${fmt(p.monto_total)}</span>
-                      {esActivo && <span className="text-[9px] font-bold bg-white/20 px-1.5 py-0.5 rounded-full">Activo</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
+          {/* TICKETS ACTIVOS + VISITA ACTUAL + HISTORIAL: panel grande y único, ancho completo de la
+              columna derecha. La barra de píldoras arriba siempre está visible (aunque no haya cliente
+              identificado) para poder retomar a cualquier cliente con pesajes pendientes sin pedirle la
+              cédula de nuevo — así 4-5 empleados pueden ir y venir entre distintos clientes en paralelo. */}
           <section className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col min-h-[400px] hover:shadow-md transition-all duration-300">
-              <div className="border-b border-slate-50 pb-3">
-                <h3 className="text-lg font-bold text-slate-900">📜 Historial Cliente</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Sugerencias y hábitos de consumo</p>
+              <div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">🎟️ Tickets Activos</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Clientes con pesajes sin cobrar · click para cambiar de cliente</p>
+                  </div>
+                  <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full">
+                    {pendientesPorCliente.length} cliente(s)
+                  </span>
+                </div>
+
+                {cargandoPendientes && pendientesPorCliente.length === 0 ? (
+                  <p className="text-xs text-slate-400 font-medium animate-pulse py-3">Cargando pedidos pendientes...</p>
+                ) : pendientesPorCliente.length === 0 ? (
+                  <p className="text-xs text-slate-400 font-medium py-3">Ningún cliente tiene pesajes pendientes en este momento.</p>
+                ) : (
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-2">
+                    {pendientesPorCliente.map((p) => {
+                      const esActivo = cliente?.id === p.cliente_id;
+                      return (
+                        <button
+                          key={p.cliente_id}
+                          type="button"
+                          onClick={() => atenderCliente(p.cliente_id)}
+                          className={`shrink-0 flex items-center gap-2 pl-3.5 pr-3 py-2 rounded-full border transition-all whitespace-nowrap ${
+                            esActivo ? "bg-blue-600 border-blue-600 text-white shadow-md" : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                          }`}
+                        >
+                          <span className="font-bold text-xs">{p.cliente_nombre}</span>
+                          <span className={`text-[10px] font-mono ${esActivo ? "text-blue-100" : "text-slate-400"}`}>{p.cantidad_tickets} tk</span>
+                          <span className={`font-mono font-bold text-sm ${esActivo ? "text-white" : "text-blue-600"}`}>${fmt(p.monto_total)}</span>
+                          {esActivo && <span className="text-[9px] font-bold bg-white/20 px-1.5 py-0.5 rounded-full">Activo</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {!cliente ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200 mt-4">
-                  <span className="text-3xl">👤</span>
-                  <h4 className="font-bold text-slate-700 mt-2 text-sm">Sin Cliente</h4>
-                  <p className="text-xs text-slate-400 mt-1 max-w-[160px]">
-                    Busque un cliente en la sección izquierda para visualizar sus compras previas y sugerir ofertas.
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200 mt-4">
+                  <span className="text-5xl">👤</span>
+                  <h4 className="font-bold text-slate-700 mt-3 text-base">Sin Cliente</h4>
+                  <p className="text-sm text-slate-400 mt-1 max-w-xs">
+                    Busque un cliente en la sección izquierda, o elija uno de los tickets activos arriba, para ver su visita actual y su historial de compras.
                   </p>
                 </div>
               ) : (
-                <div className="flex-1 flex flex-col justify-between mt-4">
+                <div className="flex-1 flex flex-col justify-between mt-4 pt-4 border-t border-slate-100">
                   <div className="space-y-4">
                     
                     {/* VISITA ACTUAL (TICKETS PENDIENTES DE PAGO) */}
@@ -1164,7 +1160,7 @@ export default function ModuloBalanza() {
                           <p className="text-xs text-slate-400 font-medium">Ningún ticket pesado pendiente.</p>
                         </div>
                       ) : (
-                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[28rem] overflow-y-auto pr-1">
                           {ticketsAgrupados.map((grupo) => {
                             const prod = masterProductos.find(p => p.id === grupo.producto_id);
                             const name = prod ? prod.nombre : `Producto #${grupo.producto_id}`;
@@ -1313,7 +1309,7 @@ export default function ModuloBalanza() {
                         <p className="text-xs text-slate-400">Sin historial registrado.</p>
                       </div>
                     ) : (
-                      <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[28rem] overflow-y-auto pr-1">
                         {historialCompras.slice(0, limiteHistorial).map((ticket) => {
                           const prod = masterProductos.find(p => p.id === ticket.producto_id);
                           const name = prod ? prod.nombre : `Producto #${ticket.producto_id}`;
