@@ -176,6 +176,7 @@ export default function ModuloBalanza() {
     departamento: string;
     fecha: string;
   } | null>(null);
+  const [mostrarTicketAutomatico, setMostrarTicketAutomatico] = useState(false);
 
   // Fetch BCV Rate and all master products on mount
   useEffect(() => {
@@ -489,12 +490,6 @@ export default function ModuloBalanza() {
     }
   }
 
-  // Scale simulation helpers
-  function simularPesoRandom() {
-    const randomWeight = (Math.random() * (3.5 - 0.15) + 0.15).toFixed(3);
-    setPesoInput(randomWeight);
-  }
-
   // Adjust weight incrementally
   function ajustarPeso(delta: number) {
     const actual = Math.max(0, (Number(pesoInput) || 0) + delta);
@@ -531,17 +526,19 @@ export default function ModuloBalanza() {
         peso: pesoNeto
       });
 
-      // Show printed ticket dialog
-      setPrintedTicket({
-        id: data.id,
-        cliente: cliente,
-        producto: productoSel,
-        peso: pesoNeto,
-        montoUsd: Number(data.monto_usd) || totalUsd,
-        montoVes: (Number(data.monto_usd) || totalUsd) * tasaBcv,
-        departamento: deptActivo,
-        fecha: new Date().toLocaleTimeString("es-VE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-      });
+      // Show printed ticket dialog only if auto-print is checked
+      if (mostrarTicketAutomatico) {
+        setPrintedTicket({
+          id: data.id,
+          cliente: cliente,
+          producto: productoSel,
+          peso: pesoNeto,
+          montoUsd: Number(data.monto_usd) || totalUsd,
+          montoVes: (Number(data.monto_usd) || totalUsd) * tasaBcv,
+          departamento: deptActivo,
+          fecha: new Date().toLocaleTimeString("es-VE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        });
+      }
 
       // Clear product and scale input, keep client so they can make another weighing
       setProductoSel(null);
@@ -821,21 +818,14 @@ export default function ModuloBalanza() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={simularPesoRandom}
-                  className="bg-slate-800 hover:bg-slate-700 border border-slate-700/50 text-blue-400 rounded-xl py-2 text-xs font-bold transition-all"
-                >
-                  🎲 Peso Aleatorio
-                </button>
+              <div>
                 <button
                   type="button"
                   onClick={() => {
                     setPesoInput("0.000");
                     setTara(0.0);
                   }}
-                  className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl py-2 text-xs font-bold transition-all"
+                  className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl py-2 text-xs font-bold transition-all"
                 >
                   Limpiar Balanza
                 </button>
@@ -870,6 +860,19 @@ export default function ModuloBalanza() {
                 >
                   {guardandoPesaje ? "Procesando Pesaje..." : "📥 Guardar y Registrar Pesaje"}
                 </button>
+
+                <div className="flex items-center gap-2 mt-2 px-1 text-slate-400 text-xs">
+                  <input
+                    type="checkbox"
+                    id="chkAutoTicket"
+                    checked={mostrarTicketAutomatico}
+                    onChange={(e) => setMostrarTicketAutomatico(e.target.checked)}
+                    className="rounded border-slate-700 bg-slate-800 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <label htmlFor="chkAutoTicket" className="cursor-pointer font-medium select-none text-slate-400">
+                    Mostrar comprobante al guardar pesaje
+                  </label>
+                </div>
               </div>
             )}
           </section>
@@ -1044,80 +1047,92 @@ export default function ModuloBalanza() {
             
             {/* PRODUCT LISTING CARD (2/3 width) */}
             <section className="xl:col-span-2 bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 min-h-[400px] flex flex-col">
-              <div className="flex items-center justify-between border-b border-slate-50 pb-3">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900">📦 Catálogo del Departamento</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">Seleccione el producto pesado en la balanza</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full">
-                    {productos.length} Productos
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setMostrarAltaRapida(true)}
-                    className="bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border border-emerald-100 hover:border-emerald-600 text-xs font-bold px-3 py-1 rounded-full transition-all"
-                  >
-                    + Agregar producto
-                  </button>
-                </div>
-              </div>
-
-              {errorText && <p className="text-sm font-semibold text-rose-600 bg-rose-50 p-3 rounded-2xl">{errorText}</p>}
-
-              {loadingProds ? (
-                <div className="flex-1 flex items-center justify-center">
-                  <span className="text-slate-400 font-medium animate-pulse">Cargando productos de la estación...</span>
-                </div>
-              ) : productos.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                  <span className="text-4xl">📭</span>
-                  <h4 className="font-bold text-slate-700 mt-3">No hay productos cargados</h4>
-                  <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                    Debe agregar productos con la línea o departamento "{deptActivo}" en el módulo de Ingreso de Datos, o crear uno rápido aquí mismo.
+              {!cliente ? (
+                <div className="flex-grow flex flex-col items-center justify-center text-center p-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                  <span className="text-5xl mb-3">👤</span>
+                  <h4 className="font-bold text-slate-700">Identifique un Cliente</h4>
+                  <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                    Busque o registre un cliente en la sección de la izquierda para desplegar el catálogo de productos y realizar pesajes.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setMostrarAltaRapida(true)}
-                    className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all"
-                  >
-                    + Agregar producto a "{deptActivo}"
-                  </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {productos.map((prod) => {
-                    const seleccionado = productoSel?.id === prod.id;
-                    return (
+                <>
+                  <div className="flex items-center justify-between border-b border-slate-50 pb-3">
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900">📦 Catálogo del Departamento</h3>
+                      <p className="text-xs text-slate-400 mt-0.5">Seleccione el producto pesado en la balanza</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full">
+                        {productos.length} Productos
+                      </span>
                       <button
-                        key={prod.id}
                         type="button"
-                        onClick={() => setProductoSel(prod)}
-                        className={`p-4 rounded-2xl text-left border transition-all flex flex-col justify-between h-32 ${
-                          seleccionado
-                            ? "bg-blue-600 text-white border-blue-600 shadow-md scale-[1.02]"
-                            : "bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300"
-                        }`}
+                        onClick={() => setMostrarAltaRapida(true)}
+                        className="bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border border-emerald-100 hover:border-emerald-600 text-xs font-bold px-3 py-1 rounded-full transition-all"
                       >
-                        <div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${seleccionado ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600"}`}>
-                              {prod.codigo_interno}
-                            </span>
-                            <span className="text-xs font-semibold">
-                              Stock: {prod.stock_total !== undefined ? fmtKg(prod.stock_total) : "N/D"}
-                            </span>
-                          </div>
-                          <h4 className="font-bold text-sm mt-2 line-clamp-1">{prod.nombre}</h4>
-                        </div>
-                        <div className="flex justify-between items-baseline mt-2">
-                          <span className={`text-[10px] font-medium ${seleccionado ? "text-blue-100" : "text-slate-400"}`}>Precio / Kg</span>
-                          <span className="font-mono text-base font-black">${fmt(prod.precio_1_detalle)}</span>
-                        </div>
+                        + Agregar producto
                       </button>
-                    );
-                  })}
-                </div>
+                    </div>
+                  </div>
+
+                  {errorText && <p className="text-sm font-semibold text-rose-600 bg-rose-50 p-3 rounded-2xl">{errorText}</p>}
+
+                  {loadingProds ? (
+                    <div className="flex-1 flex items-center justify-center">
+                      <span className="text-slate-400 font-medium animate-pulse">Cargando productos de la estación...</span>
+                    </div>
+                  ) : productos.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                      <span className="text-4xl">📭</span>
+                      <h4 className="font-bold text-slate-700 mt-3">No hay productos cargados</h4>
+                      <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                        Debe agregar productos con la línea o departamento "{deptActivo}" en el módulo de Ingreso de Datos, o crear uno rápido aquí mismo.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setMostrarAltaRapida(true)}
+                        className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all"
+                      >
+                        + Agregar producto a "{deptActivo}"
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {productos.map((prod) => {
+                        const seleccionado = productoSel?.id === prod.id;
+                        return (
+                          <button
+                            key={prod.id}
+                            type="button"
+                            onClick={() => setProductoSel(prod)}
+                            className={`p-4 rounded-2xl text-left border transition-all flex flex-col justify-between h-32 ${
+                              seleccionado
+                                ? "bg-blue-600 text-white border-blue-600 shadow-md scale-[1.02]"
+                                : "bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300"
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${seleccionado ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600"}`}>
+                                  {prod.codigo_interno}
+                                </span>
+                                <span className="text-xs font-semibold">
+                                  Stock: {prod.stock_total !== undefined ? fmtKg(prod.stock_total) : "N/D"}
+                                </span>
+                              </div>
+                              <h4 className="font-bold text-sm mt-2 line-clamp-1">{prod.nombre}</h4>
+                            </div>
+                            <div className="flex justify-between items-baseline mt-2">
+                              <span className={`text-[10px] font-medium ${seleccionado ? "text-blue-100" : "text-slate-400"}`}>Precio / Kg</span>
+                              <span className="font-mono text-base font-black">${fmt(prod.precio_1_detalle)}</span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </section>
 
@@ -1196,16 +1211,37 @@ export default function ModuloBalanza() {
                                       {timeStr} · @ ${fmt(precioKg)}/Kg
                                     </p>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => cancelarGrupoPendiente(grupo.ids)}
-                                    title="Anular pesaje (ej. el cliente devolvió el producto)"
-                                    className="text-rose-500 hover:bg-rose-50 hover:text-rose-600 rounded-lg p-1.5 transition-all shrink-0"
-                                  >
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
-                                  </button>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPrintedTicket({
+                                          id: grupo.ticketObjetivoId,
+                                          cliente: cliente,
+                                          producto: prod || productoSel || { id: grupo.producto_id, nombre: name, precio_1_detalle: precioKg, codigo_interno: "" },
+                                          peso: grupo.peso,
+                                          montoUsd: grupo.monto_usd,
+                                          montoVes: grupo.monto_usd * tasaBcv,
+                                          departamento: deptActivo,
+                                          fecha: new Date(grupo.created_at).toLocaleTimeString("es-VE", { hour: "2-digit", minute: "2-digit" })
+                                        });
+                                      }}
+                                      title="Ver/Imprimir Comprobante"
+                                      className="text-slate-400 hover:text-blue-500 hover:bg-slate-100 rounded-lg p-1.5 transition-all"
+                                    >
+                                      🖨️
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => cancelarGrupoPendiente(grupo.ids)}
+                                      title="Anular pesaje (ej. el cliente devolvió el producto)"
+                                      className="text-rose-500 hover:bg-rose-50 hover:text-rose-600 rounded-lg p-1.5 transition-all"
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                      </svg>
+                                    </button>
+                                  </div>
                                 </div>
 
                                 <div className="flex items-center justify-between gap-2 pt-2 border-t border-blue-100/50">
@@ -1218,9 +1254,27 @@ export default function ModuloBalanza() {
                                     >
                                       −
                                     </button>
-                                    <span className="font-mono font-bold text-slate-700 px-1 min-w-[64px] text-center">
-                                      {fmtKg(grupo.peso)} kg
-                                    </span>
+                                    <input
+                                      type="text"
+                                      key={`${grupo.producto_id}-${grupo.peso}`}
+                                      defaultValue={grupo.peso.toFixed(3)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          const val = parseFloat(e.currentTarget.value);
+                                          if (!isNaN(val) && val !== grupo.peso) {
+                                            actualizarPesoGrupo(grupo, val);
+                                          }
+                                        }
+                                      }}
+                                      onBlur={(e) => {
+                                        const val = parseFloat(e.currentTarget.value);
+                                        if (!isNaN(val) && val !== grupo.peso) {
+                                          actualizarPesoGrupo(grupo, val);
+                                        }
+                                      }}
+                                      className="font-mono font-bold text-slate-700 px-1 w-16 text-center bg-white border border-slate-200 rounded focus:border-blue-500 focus:outline-none text-xs py-0.5"
+                                    />
+                                    <span className="text-[10px] text-slate-400 font-medium mr-1">kg</span>
                                     <button
                                       type="button"
                                       title="Agregar 100g más al pesaje"
