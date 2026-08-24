@@ -377,6 +377,7 @@ export default function ModuloCaja() {
   const [ticketsPendientes, setTicketsPendientes] = useState<TicketPendiente[]>([]);
   const [ticketsSeleccionados, setTicketsSeleccionados] = useState<number[]>([]);
   const [ticketModificaciones, setTicketModificaciones] = useState<Record<number, number>>({});
+  const [pesoTicketDrafts, setPesoTicketDrafts] = useState<Record<number, string>>({});
 
   // --- Cliente ---
   const [cliente, setCliente] = useState<ClienteLite | null>(null);
@@ -2235,23 +2236,50 @@ export default function ModuloCaja() {
                     <div className="flex items-center gap-1.5 ml-2" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
-                        onClick={() => actualizarPesoTicket(ticket.id, Math.max(0.001, Number(ticket.peso) - 0.05))}
+                        onClick={() => {
+                          setPesoTicketDrafts(prev => {
+                            const { [ticket.id]: _omit, ...rest } = prev;
+                            return rest;
+                          });
+                          actualizarPesoTicket(ticket.id, Math.max(0.001, Number(ticket.peso) - 0.05));
+                        }}
                         className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors text-xs font-bold"
                       >
                         −
                       </button>
                       <input
-                        type="number"
-                        step="0.001"
-                        min="0.001"
-                        value={ticket.peso}
+                        type="text"
+                        inputMode="decimal"
+                        value={pesoTicketDrafts[ticket.id] ?? String(ticket.peso)}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => actualizarPesoTicket(ticket.id, parseFloat(e.target.value) || 0)}
+                        onChange={(e) => {
+                          // Acepta "." y "," (teclado numérico en Windows con locale es-VE
+                          // suele mandar coma) como separador decimal, y mantiene lo que el
+                          // usuario está escribiendo (ej. "0.") sin que se reformatee al vuelo.
+                          const raw = e.target.value.replace(",", ".");
+                          if (raw !== "" && !/^\d*\.?\d*$/.test(raw)) return;
+                          setPesoTicketDrafts(prev => ({ ...prev, [ticket.id]: e.target.value }));
+                          if (raw !== "" && raw !== ".") {
+                            actualizarPesoTicket(ticket.id, parseFloat(raw) || 0);
+                          }
+                        }}
+                        onBlur={() => {
+                          setPesoTicketDrafts(prev => {
+                            const { [ticket.id]: _omit, ...rest } = prev;
+                            return rest;
+                          });
+                        }}
                         className="w-16 text-center font-mono text-xs font-bold border border-slate-200 rounded-lg py-1 px-1 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500 bg-white"
                       />
                       <button
                         type="button"
-                        onClick={() => actualizarPesoTicket(ticket.id, Number(ticket.peso) + 0.05)}
+                        onClick={() => {
+                          setPesoTicketDrafts(prev => {
+                            const { [ticket.id]: _omit, ...rest } = prev;
+                            return rest;
+                          });
+                          actualizarPesoTicket(ticket.id, Number(ticket.peso) + 0.05);
+                        }}
                         className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors text-xs font-bold"
                       >
                         +
